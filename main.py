@@ -32,10 +32,11 @@ user_goals = {}
 congratulated = {}
 relapse_times = []
 user_timezones = {}
+patient_memory = {}  # Глубокая память: история, прогресс, предпочтения
 
 # === ЗАГРУЗКА ===
 def load_data():
-    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones
+    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones, patient_memory
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -49,6 +50,7 @@ def load_data():
                 congratulated = data.get("congratulated", {})
                 relapse_times = data.get("relapse_times", [])
                 user_timezones = data.get("user_timezones", {})
+                patient_memory = data.get("patient_memory", {})
         except:
             pass
 
@@ -63,7 +65,8 @@ def save_data():
         "user_goals": user_goals,
         "congratulated": congratulated,
         "relapse_times": relapse_times,
-        "user_timezones": user_timezones
+        "user_timezones": user_timezones,
+        "patient_memory": patient_memory
     }
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -79,6 +82,33 @@ def empty_profile():
         "last_relapse": "",
         "notes": ""
     }
+
+# === ГЛУБОКАЯ ПАМЯТЬ ===
+def empty_memory():
+    return {
+        "first_contact": datetime.now().strftime("%d.%m.%Y"),
+        "sessions": 0,
+        "preferred_techniques": [],
+        "important_events": [],
+        "progress_notes": []
+    }
+
+def update_memory(user_id, field, value):
+    if user_id not in patient_memory:
+        patient_memory[user_id] = empty_memory()
+    if field == "preferred_techniques":
+        if value not in patient_memory[user_id]["preferred_techniques"]:
+            patient_memory[user_id]["preferred_techniques"].append(value)
+            patient_memory[user_id]["preferred_techniques"] = patient_memory[user_id]["preferred_techniques"][-5:]
+    elif field == "important_events":
+        patient_memory[user_id]["important_events"].append(f"{datetime.now().strftime('%d.%m.%Y')}: {value}")
+        patient_memory[user_id]["important_events"] = patient_memory[user_id]["important_events"][-10:]
+    elif field == "progress_notes":
+        patient_memory[user_id]["progress_notes"].append(f"{datetime.now().strftime('%d.%m.%Y')}: {value}")
+        patient_memory[user_id]["progress_notes"] = patient_memory[user_id]["progress_notes"][-10:]
+    else:
+        patient_memory[user_id][field] = value
+    save_data()
 
 # === ХАРАКТЕР АННЫ ===
 ANNA_PROMPT_TEMPLATE = """
@@ -121,135 +151,126 @@ ANNA_PROMPT_TEMPLATE = """
 Цели: {goals}
 Последний срыв: {last_relapse}
 
-Обращайся по имени.
+## ГЛУБОКАЯ ПАМЯТЬ О ПАЦИЕНТЕ
+Первый контакт: {first_contact}
+Сессий: {sessions}
+Любимые техники: {techniques}
+Важные события: {events}
+Прогресс: {progress}
+
+Используй эту информацию в разговоре. Помни историю пациента.
 
 ## ПРАВИЛА
 1. Одна мысль = одно сообщение.
 2. 1–5 предложений.
 3. На «ты».
-4. НЕ зацикливайся на одной теме.
+4. НЕ зацикливайся.
 
 ## СИГНАЛЫ (ОЧЕНЬ ВАЖНО)
-Ты показываешь кнопки ТОЛЬКО через теги:
-- [MOOD] — только когда ты сама прямо спрашиваешь: «Оцени состояние от 1 до 10?»
-- [CRAVING] — только когда ты сама прямо спрашиваешь: «Насколько сильна твоя тяга?»
-
-НЕ добавляй эти теги, если не задаёшь прямой вопрос про оценку.
+- [MOOD] — только когда прямо спрашиваешь оценку от 1 до 10
+- [CRAVING] — только когда прямо спрашиваешь про силу тяги
 В обычном разговоре НИКОГДА не добавляй теги.
 
 ## ПРОТОКОЛЫ РАБОТЫ
 
 ### ЭТАП 1: ОЦЕНКА
 - «Как давно это началось?»
-- «Как часто это происходит?»
+- «Как часто?»
 - «Что запускает?»
 
 ### ЭТАП 2: СТАБИЛИЗАЦИЯ
 Дыхание, заземление, отвлечение.
 
 ### ЭТАП 3: РАБОТА
-- «Что было до того?»
-- «Какие мысли усиливают?»
+Углубление в причины.
 
 ### ЭТАП 4: ПРОФИЛАКТИКА
-- «Что сделаешь заранее?»
-- «Какой план?»
+План на будущее.
 
-## ГЛУБИННЫЕ ВОПРОСЫ
-- «Что именно ты чувствуешь?»
-- «Где в теле?»
-- «Что это значит для тебя?»
-- «Что будет, если ничего не изменить?»
+## РАСШИРЕННАЯ БАЗА ТЕХНИК
 
-## ДОМАШНИЕ ЗАДАНИЯ
-### ДЕПРЕССИЯ
-- «Запиши 3 приятных дела»
-### ТРЕВОГА
-- «Веди дневник тревоги»
-### ПАНИКА
-- «Запиши триггеры»
-### ЗАВИСИМОСТЬ
-- «Составь список триггеров»
-### САМООЦЕНКА
-- «Запиши 3 достижения»
-### БЕССОННИЦА
-- «Ложись в одно время»
-### ГНЕВ
-- «Дневник гнева»
-### СТРЕСС
-- «Список забот»
-
-## ОБРАТНАЯ СВЯЗЬ
-- «Помогла ли техника?»
-- «Что было трудным?»
-- «Что сработало?»
-
-## ТЕХНИКИ
-
-### ДЕПРЕССИЯ
-- Поведенческая активация
-- Когнитивная триада
+### ДЕПРЕССИЯ (углублённо)
+- Шкала Бека: «Оцени: настроение, сон, аппетит, интерес к жизни»
+- Когнитивная триада: «Что думаешь о себе, мире, будущем?»
+- Поведенческая активация: «План приятных дел на неделю»
 - Противоположное действие
+- Работа с руминациями: «Останови мысль, переключись»
 
-### ТРЕВОГА
+### ТРЕВОГА (углублённо)
+- Градация страхов: «Составь список страхов от 1 до 10»
+- Экспозиция: «Начни с самого лёгкого страха»
+- Дневник тревоги
 - Дыхание 4-4-4-4
-- Заземление
-- «Насколько реальна угроза?»
+- Заземление 5-4-3-2-1
 
-### ПАНИКА
+### ПАНИКА (углублённо)
+- Цикл паники: «Мысль → тело → страх → ещё больше тела»
+- Разбор триггеров
 - 5-4-3-2-1
-- «Пройдёт за 20 минут»
 - Удлинённый выдох
+- «Это пройдёт за 20 минут»
 
-### СТРЕСС
-- Релаксация
-- «Что важно?»
-- «Список забот»
-
-### ЗАВИСИМОСТЬ
+### ЗАВИСИМОСТЬ (углублённо)
+- План срыва: «Что будешь делать, если тяга 8 из 10?»
+- Работа с отрицанием: «Что ты теряешь из-за зависимости?»
 - Серфинг по тяге
-- Анализ цепочки
 - HALT
-- «Отложи на 10 минут»
+- Анализ цепочки
 
-### СТЫД И ВИНА
-- «Вина — сделал плохо. Стыд — я плохой»
-- «Что бы сказал другу?»
+### ПТСР (углублённо)
+- Стабилизация: «Ты в безопасности»
+- Работа с флешбэками: «Это воспоминание, не реальность»
+- Заземление
+- Безопасное место
 
-### ГНЕВ
+### СТЫД (углублённо)
+- Разделение вины и стыда
+- Самосострадание
+- Нормализация
+
+### ГНЕВ (углублённо)
 - СТОП
 - Дневник гнева
+- «Что под злостью?»
 
-### ОДИНОЧЕСТВО
-- «Кому напишешь?»
-- «Один шаг к людям»
+### ОДИНОЧЕСТВО (углублённо)
+- Социальные контакты
+- Самоподдержка
+- План одного шага
 
-### БЕССОННИЦА
+### БЕССОННИЦА (углублённо)
 - Гигиена сна
 - 4-7-8
+- «Вставай, если не спишь»
 
-### ПРОКРАСТИНАЦИЯ
+### ПРОКРАСТИНАЦИЯ (углублённо)
 - «5 минут»
-- «Разбей задачу»
+- Дробление
+- «Что страшного?»
 
-### ПЕРФЕКЦИОНИЗМ
+### ПЕРФЕКЦИОНИЗМ (углублённо)
 - «Достаточно хорошо»
+- Работа с установками
 
-### САМООЦЕНКА
+### САМООЦЕНКА (углублённо)
 - Дневник достижений
+- «Что ценишь в себе?»
 
-### ПОТЕРЯ
-- «Позволь чувствовать»
+### ПОТЕРЯ (углублённо)
+- Проживание
 - Письма
 - Ритуалы
 
-### ВЫГОРАНИЕ
-- «Скажи нет»
+### ВЫГОРАНИЕ (углублённо)
+- Границы
 - Отдых
+- Приоритеты
 
-### ПТСР
-- Заземление
-- Безопасное место
+## ДОМАШНИЕ ЗАДАНИЯ
+Давай конкретные задания после каждой сессии.
+
+## ОБРАТНАЯ СВЯЗЬ
+Спрашивай, что сработало, и запоминай.
 
 ## КРИЗИС
 Суицид → «Твоя жизнь важна. Позвони: 8-800-2000-122 или 112».
@@ -262,7 +283,12 @@ ANNA_PROMPT_TEMPLATE = """
 def build_prompt(user_id):
     if user_id not in patient_profiles:
         patient_profiles[user_id] = empty_profile()
+    if user_id not in patient_memory:
+        patient_memory[user_id] = empty_memory()
+    
     p = patient_profiles[user_id]
+    m = patient_memory[user_id]
+    
     return ANNA_PROMPT_TEMPLATE.format(
         name=p.get("name", "") or "неизвестно",
         addiction=p.get("addiction", "") or "неизвестно",
@@ -270,7 +296,12 @@ def build_prompt(user_id):
         triggers=p.get("triggers", "") or "неизвестно",
         goals=p.get("goals", "") or "неизвестно",
         last_relapse=p.get("last_relapse", "") or "неизвестно",
-        notes=p.get("notes", "") or "нет"
+        notes=p.get("notes", "") or "нет",
+        first_contact=m.get("first_contact", "неизвестно"),
+        sessions=m.get("sessions", 0),
+        techniques=", ".join(m.get("preferred_techniques", [])) or "пока нет",
+        events="; ".join(m.get("important_events", [])) or "пока нет",
+        progress="; ".join(m.get("progress_notes", [])) or "пока нет"
     )
 
 # === OPENROUTER ===
@@ -321,10 +352,16 @@ def ask_anna(user_id, user_text):
     user_id = str(user_id)
     if user_id not in dialogue_history:
         dialogue_history[user_id] = []
+    if user_id not in patient_memory:
+        patient_memory[user_id] = empty_memory()
+    
     history = dialogue_history[user_id]
     history.append({"role": "user", "content": user_text})
     if len(history) > MAX_HISTORY:
         history = history[-MAX_HISTORY:]
+    
+    patient_memory[user_id]["sessions"] = patient_memory[user_id].get("sessions", 0) + 1
+    
     system_prompt = build_prompt(user_id)
     messages = [{"role": "system", "content": system_prompt}] + history
     headers = {
@@ -391,7 +428,7 @@ MOTIVATIONS = [
     "Твоя сила растёт. 💪"
 ]
 
-# === ВРЕМЯ ПАЦИЕНТА ===
+# === ВРЕМЯ ===
 def get_patient_time(user_id):
     tz_offset = user_timezones.get(user_id, 0)
     return datetime.now() + timedelta(hours=tz_offset)
@@ -405,14 +442,12 @@ dp = Dispatcher()
 async def start_command(message: types.Message):
     user_id = str(message.from_user.id)
     dialogue_history[user_id] = []
+    if user_id not in patient_memory:
+        patient_memory[user_id] = empty_memory()
     await message.answer(
         "Привет. Я Анна. Я рядом. 🌱\n\n"
-        "Чтобы я отправляла напоминания в удобное для тебя время, скажи: в каком ты часовом поясе?\n\n"
-        "Напиши просто число, например:\n"
-        "• +3 — Москва\n"
-        "• +0 — Лондон\n"
-        "• -5 — Нью-Йорк\n"
-        "• +9 — Токио"
+        "Чтобы я отправляла напоминания в твоё время, скажи: в каком ты часовом поясе?\n"
+        "Напиши число: +3 (Москва), +0 (Лондон), -5 (Нью-Йорк), +9 (Токио)"
     )
 
 @dp.message(Command("time"))
@@ -424,11 +459,11 @@ async def time_command(message: types.Message):
         if -12 <= offset <= 14:
             user_timezones[user_id] = offset
             save_data()
-            await message.answer(f"✅ Часовой пояс сохранён: UTC {offset:+d}")
+            await message.answer(f"✅ Часовой пояс: UTC {offset:+d}")
         else:
-            await message.answer("Введи число от -12 до +14. Например: /time +3")
+            await message.answer("Введи от -12 до +14")
     except:
-        await message.answer("Напиши: /time +3 (для Москвы)")
+        await message.answer("Напиши: /time +3")
 
 @dp.message(Command("menu"))
 async def menu_command(message: types.Message):
@@ -438,7 +473,7 @@ async def menu_command(message: types.Message):
 async def help_command(message: types.Message):
     await message.answer(
         "🌱 Команды:\n"
-        "/time +3 — часовой пояс\n"
+        "/time +3 — пояс\n"
         "/menu — кнопки\n"
         "/mood — оценка\n"
         "/sober — трезвость\n"
@@ -450,8 +485,25 @@ async def help_command(message: types.Message):
         "/goals — цели\n"
         "/breath — дыхание\n"
         "/motivation — мотивация\n"
-        "/achievements — успехи"
+        "/achievements — успехи\n"
+        "/memory — моя память о тебе"
     )
+
+@dp.message(Command("memory"))
+async def memory_command(message: types.Message):
+    user_id = str(message.from_user.id)
+    if user_id in patient_memory:
+        m = patient_memory[user_id]
+        await message.answer(
+            f"🧠 Моя память о тебе:\n\n"
+            f"Первый контакт: {m.get('first_contact', '—')}\n"
+            f"Сессий: {m.get('sessions', 0)}\n"
+            f"Техники: {', '.join(m.get('preferred_techniques', [])) or '—'}\n"
+            f"События: {'; '.join(m.get('important_events', [])) or '—'}\n"
+            f"Прогресс: {'; '.join(m.get('progress_notes', [])) or '—'}"
+        )
+    else:
+        await message.answer("Память пуста.")
 
 @dp.message(Command("mood"))
 async def mood_command(message: types.Message):
@@ -472,6 +524,7 @@ async def relapse_command(message: types.Message):
     sober_tracker[user_id] = datetime.now().strftime("%Y-%m-%d")
     relapse_times.append(datetime.now().strftime("%H:%M"))
     congratulated[user_id] = []
+    update_memory(user_id, "important_events", "Срыв")
     save_data()
     await message.answer("Я не осуждаю. Начнём снова. 💚")
 
@@ -540,12 +593,13 @@ async def reset_command(message: types.Message):
     mood_journal[user_id] = []
     care_mode[user_id] = False
     patient_profiles[user_id] = empty_profile()
+    patient_memory[user_id] = empty_memory()
     sober_tracker.pop(user_id, None)
     user_goals.pop(user_id, None)
     congratulated.pop(user_id, None)
     user_timezones.pop(user_id, None)
     save_data()
-    await message.answer("🔄 Сброс. 🌱")
+    await message.answer("🔄 Полный сброс. 🌱")
 
 @dp.message(Command("stop_care"))
 async def stop_care_command(message: types.Message):
@@ -556,7 +610,7 @@ async def stop_care_command(message: types.Message):
 # === ГОЛОСОВЫЕ ===
 @dp.message(lambda message: message.voice is not None)
 async def handle_voice(message: types.Message):
-    await message.answer("Я слышу тебя. Спасибо, что делишься. 💚\nОпиши текстом, что случилось?")
+    await message.answer("Я слышу тебя. Опиши текстом. 💚")
 
 # === КНОПКИ ===
 @dp.callback_query()
@@ -568,8 +622,7 @@ async def handle_callback(callback: types.CallbackQuery):
         if user_id not in mood_journal:
             mood_journal[user_id] = []
         mood_journal[user_id].append(f"{datetime.now().strftime('%d.%m.%Y %H:%M')} — {v}/10")
-        if user_id in dialogue_history:
-            dialogue_history[user_id].append({"role": "system", "content": f"Пациент оценил состояние: {v}/10. Тема закрыта."})
+        update_memory(user_id, "progress_notes", f"Оценка {v}/10")
         if v <= 5:
             care_mode[user_id] = True
             await callback.message.answer(f"Спасибо ({v}/10). Я рядом. 💚")
@@ -585,7 +638,7 @@ async def handle_callback(callback: types.CallbackQuery):
         if user_id in dialogue_history:
             dialogue_history[user_id].append({"role": "system", "content": f"Пациент оценил тягу: {level_text}. Тема закрыта."})
         save_data()
-        await callback.message.answer(f"Тяга: {level_text}. Опиши, где в теле ты её чувствуешь? 🌊")
+        await callback.message.answer(f"Тяга: {level_text}. Опиши, где в теле? 🌊")
         await callback.answer()
 
 # === СООБЩЕНИЯ ===
@@ -594,19 +647,14 @@ async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
     text = message.text
     
-    # Обработка часового пояса
     if re.match(r'^[+-]?\d{1,2}$', text):
         offset = int(text.replace("+", ""))
         if -12 <= offset <= 14:
             user_timezones[user_id] = offset
             save_data()
-            await message.answer(
-                f"✅ Запомнила! Твой часовой пояс: UTC {offset:+d}\n"
-                "Теперь напоминания будут приходить в твоё время. 💚",
-                reply_markup=menu_keyboard()
-            )
+            await message.answer(f"✅ Часовой пояс: UTC {offset:+d}", reply_markup=menu_keyboard())
         else:
-            await message.answer("Введи число от -12 до +14. Например: +3")
+            await message.answer("Введи от -12 до +14")
         return
     
     if text == "📱 Команды":
@@ -625,6 +673,7 @@ async def handle_message(message: types.Message):
         await message.answer("Оцени состояние от 1 до 10:", reply_markup=mood_keyboard())
         return
     if text == "💪 Я справился":
+        update_memory(user_id, "important_events", "Справился с тягой")
         await message.answer("Горжусь! 💪🌱")
         return
     
@@ -668,26 +717,23 @@ async def handle_message(message: types.Message):
         print(f"Ошибка: {e}")
         await message.answer("Прости, ошибка. Попробуй ещё раз.")
 
-# === НАПОМИНАНИЯ С УЧЁТОМ ЧАСОВОГО ПОЯСА ===
+# === НАПОМИНАНИЯ ===
 async def send_reminders():
     while True:
         now = datetime.now()
         for uid in list(dialogue_history.keys()):
             patient_time = get_patient_time(uid)
             ct = patient_time.strftime("%H:%M")
-            
             if ct == "09:00":
                 try:
-                    await bot.send_message(uid, "🌅 Доброе утро! Оцени состояние от 1 до 10:", reply_markup=mood_keyboard())
+                    await bot.send_message(uid, "🌅 Доброе утро! Оцени:", reply_markup=mood_keyboard())
                 except:
                     pass
-            
             if ct == "21:00":
                 try:
-                    await bot.send_message(uid, "🌙 Как день? Оцени от 1 до 10:", reply_markup=mood_keyboard())
+                    await bot.send_message(uid, "🌙 Как день? Оцени:", reply_markup=mood_keyboard())
                 except:
                     pass
-        
         await asyncio.sleep(30)
 
 # === УМНЫЕ НАПОМИНАНИЯ ===
@@ -700,82 +746,10 @@ async def smart_reminders():
             if now == common_time:
                 for uid in dialogue_history.keys():
                     try:
-                        await bot.send_message(uid, "⏰ В это время раньше случались срывы. Будь внимателен. Я рядом. 💚")
+                        await bot.send_message(uid, "⏰ В это время раньше случались срывы. Будь внимателен. 💚")
                     except:
                         pass
 
 # === ПОЧАСОВАЯ ===
 async def send_hourly_care():
-    messages = ["🌱 Я рядом.", "💭 Что внутри?", "☀️ Держишься!", "🌊 Волна спадает.", "💪 Ты сильнее!", "🧘 4-4-4-4.", "📋 Что сделаешь?", "🌙 Ты не один."]
-    while True:
-        await asyncio.sleep(3600)
-        for uid in list(care_mode.keys()):
-            if care_mode.get(uid, False):
-                try:
-                    await bot.send_message(uid, random.choice(messages))
-                except:
-                    pass
-
-# === АВТОПОЗДРАВЛЕНИЯ ===
-async def send_congratulations():
-    while True:
-        await asyncio.sleep(3600)
-        for uid in list(sober_tracker.keys()):
-            days = (datetime.now() - datetime.strptime(sober_tracker[uid], "%Y-%m-%d")).days
-            for m in [3, 7, 14, 30]:
-                if days == m and m not in congratulated.get(uid, []):
-                    congratulated.setdefault(uid, []).append(m)
-                    save_data()
-                    emoji = {3: "💪", 7: "🥉", 14: "🥈", 30: "🏆"}[m]
-                    try:
-                        await bot.send_message(uid, f"{emoji} {m} дней! Ты невероятен!")
-                    except:
-                        pass
-
-# === HTTP ===
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-    def do_POST(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.end_headers()
-    def log_message(self, format, *args):
-        pass
-
-def start_http_server():
-    try:
-        port = int(os.environ.get("PORT", 10000))
-        server = HTTPServer(("0.0.0.0", port), HealthHandler)
-        def self_ping():
-            while True:
-                try:
-                    requests.get(f"http://localhost:{port}/", timeout=5)
-                except:
-                    pass
-                time.sleep(300)
-        threading.Thread(target=self_ping, daemon=True).start()
-        server.serve_forever()
-    except:
-        pass
-
-# === ЗАПУСК ===
-async def main():
-    load_data()
-    asyncio.create_task(send_reminders())
-    asyncio.create_task(send_hourly_care())
-    asyncio.create_task(send_congratulations())
-    asyncio.create_task(smart_reminders())
-    threading.Thread(target=start_http_server, daemon=True).start()
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    messages = ["🌱 Я рядом
