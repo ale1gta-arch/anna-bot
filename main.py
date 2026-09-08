@@ -5,7 +5,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -26,7 +26,7 @@ MAX_HISTORY = 20
 patient_profiles = {}
 mood_journal = {}
 care_mode = {}
-sober_tracker = {}  # user_id -> дата последнего срыва
+sober_tracker = {}
 
 # === ЗАГРУЗКА ДАННЫХ ===
 def load_data():
@@ -114,11 +114,9 @@ ANNA_PROMPT_TEMPLATE = """
 ## ТЕХНИКИ
 ### Мотивационное интервьюирование
 - «По шкале от 0 до 10, насколько важно изменить ситуацию?»
-- «Почему не меньше?»
 
 ### КПТ
 - «Какая мысль пришла перед этим?»
-- «Есть ли другой взгляд?»
 
 ### Профилактика рецидивов
 - «Давай разберём срыв как цепочку.»
@@ -131,7 +129,6 @@ ANNA_PROMPT_TEMPLATE = """
 - «Умойся ледяной водой. Дыши по квадрату: 4-4-4-4».
 
 ### Стыд и вина
-- Разделяй вину и стыд.
 - «Что бы ты сказал другу?»
 
 ## КРИЗИСНЫЙ ПРОТОКОЛ
@@ -144,7 +141,6 @@ ANNA_PROMPT_TEMPLATE = """
 1. «Дай мне 5 минут.»
 2. Задавай простые вопросы.
 3. Оценивай тягу по шкале 1–10.
-4. Завершай через «контракт безопасности».
 
 ## ЗАПРЕТЫ
 - Не осуждай, не ругай
@@ -198,7 +194,7 @@ def extract_profile(user_id):
         role = "Пациент" if msg["role"] == "user" else "Анна"
         dialogue_text += f"{role}: {msg['content']}\n"
     try:
-        prompt = f"""Извлеки из диалога информацию о пациенте. Верни JSON: {{"name":"","addiction":"","stage":"","triggers":"","goals":"","last_relapse":"","notes":""}}. Диалог:\n{dialogue_text}"""
+        prompt = f"""Извлеки информацию о пациенте. Верни JSON: {{"name":"","addiction":"","stage":"","triggers":"","goals":"","last_relapse":"","notes":""}}. Диалог:\n{dialogue_text}"""
         json_text = call_openrouter(prompt, "Заполни анкету")
         json_text = json_text.replace("```json", "").replace("```", "").strip()
         start = json_text.find("{")
@@ -256,7 +252,7 @@ def craving_keyboard():
          InlineKeyboardButton(text="Невыносимая", callback_data="craving_extreme")]
     ])
 
-def main_keyboard():
+def menu_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🚨 SOS"), KeyboardButton(text="📊 Оценить")],
@@ -275,14 +271,19 @@ async def start_command(message: types.Message):
     user_id = str(message.from_user.id)
     dialogue_history[user_id] = []
     await message.answer(
-        "Привет. Я Анна. Я здесь, чтобы поддержать тебя. 🌱",
-        reply_markup=main_keyboard()
+        "Привет. Я Анна. Я здесь, чтобы поддержать тебя. 🌱\n\n"
+        "Напиши /menu, чтобы открыть быстрые кнопки."
     )
+
+@dp.message(Command("menu"))
+async def menu_command(message: types.Message):
+    await message.answer("Выбери действие:", reply_markup=menu_keyboard())
 
 @dp.message(Command("help"))
 async def help_command(message: types.Message):
     await message.answer(
         "🌱 Я умею:\n\n"
+        "/menu — быстрые кнопки\n"
         "/mood — оценить состояние\n"
         "/sober — дни без срыва\n"
         "/relapse — отметить срыв\n"
@@ -312,7 +313,7 @@ async def relapse_command(message: types.Message):
     sober_tracker[user_id] = datetime.now().strftime("%Y-%m-%d")
     save_data()
     await message.answer(
-        "Я не осуждаю тебя. Срыв — это шаг назад, но не провал.\n\n"
+        "Я не осуждаю тебя. Срыв — это шаг назад, но не провал.\n"
         "Давай начнём снова. Я рядом. 💚"
     )
 
@@ -492,6 +493,25 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
+    
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+    
+    def do_POST(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    
+    def do_PUT(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.end_headers()
+    
     def log_message(self, format, *args):
         pass
 
