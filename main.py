@@ -28,11 +28,10 @@ mood_journal = {}
 care_mode = {}
 sober_tracker = {}
 user_goals = {}
-achievements = {}
 
 # === ЗАГРУЗКА ДАННЫХ ===
 def load_data():
-    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, achievements
+    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -43,7 +42,6 @@ def load_data():
                 care_mode = data.get("care_mode", {})
                 sober_tracker = data.get("sober_tracker", {})
                 user_goals = data.get("user_goals", {})
-                achievements = data.get("achievements", {})
         except:
             pass
 
@@ -55,8 +53,7 @@ def save_data():
         "mood_journal": mood_journal,
         "care_mode": care_mode,
         "sober_tracker": sober_tracker,
-        "user_goals": user_goals,
-        "achievements": achievements
+        "user_goals": user_goals
     }
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -229,11 +226,11 @@ def menu_keyboard():
 def commands_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="/mood"), KeyboardButton(text="/sober")],
-            [KeyboardButton(text="/plan"), KeyboardButton(text="/diary")],
-            [KeyboardButton(text="/profile"), KeyboardButton(text="/day")],
-            [KeyboardButton(text="/goals"), KeyboardButton(text="/breath")],
-            [KeyboardButton(text="/motivation"), KeyboardButton(text="/achievements")],
+            [KeyboardButton(text="📊 Оценка /mood"), KeyboardButton(text="💚 Трезвость /sober")],
+            [KeyboardButton(text="📋 План /plan"), KeyboardButton(text="📖 Дневник /diary")],
+            [KeyboardButton(text="👤 Анкета /profile"), KeyboardButton(text="📅 Сегодня /day")],
+            [KeyboardButton(text="🎯 Цели /goals"), KeyboardButton(text="🧘 Дыхание /breath")],
+            [KeyboardButton(text="💪 Мотивация /motivation"), KeyboardButton(text="🏆 Успехи /achievements")],
             [KeyboardButton(text="⬅️ Назад")]
         ],
         resize_keyboard=True
@@ -262,12 +259,13 @@ async def start_command(message: types.Message):
     dialogue_history[user_id] = []
     await message.answer(
         "Привет. Я Анна. Я здесь, чтобы поддержать тебя. 🌱\n"
-        "Напиши /menu для быстрых кнопок."
+        "Напиши /menu для кнопок.",
+        reply_markup=menu_keyboard()
     )
 
 @dp.message(Command("menu"))
 async def menu_command(message: types.Message):
-    await message.answer("Выбери действие:", reply_markup=menu_keyboard())
+    await message.answer("Главное меню:", reply_markup=menu_keyboard())
 
 @dp.message(Command("help"))
 async def help_command(message: types.Message):
@@ -275,16 +273,16 @@ async def help_command(message: types.Message):
         "🌱 Команды:\n"
         "/menu — кнопки\n"
         "/mood — оценка\n"
-        "/sober — дни без срыва\n"
+        "/sober — трезвость\n"
         "/relapse — срыв\n"
         "/plan — план\n"
         "/diary — дневник\n"
         "/profile — анкета\n"
-        "/day — за сегодня\n"
+        "/day — сегодня\n"
         "/goals — цели\n"
         "/breath — дыхание\n"
         "/motivation — мотивация\n"
-        "/achievements — достижения"
+        "/achievements — успехи"
     )
 
 @dp.message(Command("mood"))
@@ -306,7 +304,7 @@ async def relapse_command(message: types.Message):
     user_id = str(message.from_user.id)
     sober_tracker[user_id] = datetime.now().strftime("%Y-%m-%d")
     save_data()
-    await message.answer("Я не осуждаю. Это шаг назад, но не провал. Начнём снова. 💚")
+    await message.answer("Я не осуждаю. Это шаг назад, но не провал. 💚")
 
 @dp.message(Command("plan"))
 async def plan_command(message: types.Message):
@@ -342,7 +340,7 @@ async def profile_command(message: types.Message):
             f"Цели: {p.get('goals') or '—'}"
         )
     else:
-        await message.answer("Анкета пуста. Расскажи о себе. 💚")
+        await message.answer("Анкета пуста. 💚")
 
 @dp.message(Command("day"))
 async def day_command(message: types.Message):
@@ -350,25 +348,25 @@ async def day_command(message: types.Message):
     today = datetime.now().strftime("%d.%m.%Y")
     entries = mood_journal.get(user_id, [])
     today_entries = [e for e in entries if today in e]
-    await message.answer(f"📊 За сегодня: {len(today_entries)} оценок.")
+    await message.answer(f"📅 Сегодня оценок: {len(today_entries)}")
 
 @dp.message(Command("goals"))
 async def goals_command(message: types.Message):
     user_id = str(message.from_user.id)
     if user_id in user_goals and user_goals[user_id]:
-        await message.answer(f"🎯 Твои цели:\n{user_goals[user_id]}\n\nДобавить: /goals <цель>")
+        await message.answer(f"🎯 Твои цели:\n{user_goals[user_id]}")
     else:
-        await message.answer("Напиши: /goals <твоя цель>\nНапример: /goals быть трезвым ради семьи")
+        await message.answer("Напиши: /goals <цель>")
 
 @dp.message(Command("breath"))
 async def breath_command(message: types.Message):
     await message.answer(
-        "🧘 Дыхательное упражнение:\n"
-        "Вдох — 4 секунды\n"
-        "Пауза — 4 секунды\n"
-        "Выдох — 4 секунды\n"
-        "Пауза — 4 секунды\n\n"
-        "Повтори 5 раз. Я подожду. 💚"
+        "🧘 Дыхание:\n"
+        "Вдох 4 сек\n"
+        "Пауза 4 сек\n"
+        "Выдох 4 сек\n"
+        "Пауза 4 сек\n"
+        "Повтори 5 раз. 💚"
     )
 
 @dp.message(Command("motivation"))
@@ -382,17 +380,17 @@ async def achievements_command(message: types.Message):
         last = datetime.strptime(sober_tracker[user_id], "%Y-%m-%d")
         days = (datetime.now() - last).days
         if days >= 30:
-            await message.answer("🏆 Ты достиг 30 дней! Невероятно!")
+            await message.answer("🏆 30 дней! Невероятно!")
         elif days >= 14:
-            await message.answer("🥈 14 дней! Две недели победы!")
+            await message.answer("🥈 14 дней! Две недели!")
         elif days >= 7:
-            await message.answer("🥉 7 дней! Неделя силы!")
+            await message.answer("🥉 7 дней! Неделя!")
         elif days >= 3:
-            await message.answer("💪 3 дня! Отличный старт!")
+            await message.answer("💪 3 дня! Старт!")
         else:
-            await message.answer("🌱 Каждый день важен. Продолжай!")
+            await message.answer("🌱 Каждый день важен!")
     else:
-        await message.answer("🏆 Достижения появятся после отметки срыва (/relapse).")
+        await message.answer("🏆 Отметь срыв: /relapse")
 
 @dp.message(Command("reset"))
 async def reset_command(message: types.Message):
@@ -465,31 +463,31 @@ async def handle_message(message: types.Message):
         await message.answer("Ты справился! Горжусь! 💪🌱")
         return
     
+    # Кнопки с командами
+    command_buttons = {
+        "📊 Оценка /mood": mood_command,
+        "💚 Трезвость /sober": sober_command,
+        "📋 План /plan": plan_command,
+        "📖 Дневник /diary": diary_command,
+        "👤 Анкета /profile": profile_command,
+        "📅 Сегодня /day": day_command,
+        "🎯 Цели /goals": goals_command,
+        "🧘 Дыхание /breath": breath_command,
+        "💪 Мотивация /motivation": motivation_command,
+        "🏆 Успехи /achievements": achievements_command,
+    }
+    
+    if text in command_buttons:
+        await command_buttons[text](message)
+        return
+    
     # Обработка целей
     if text.startswith("/goals "):
-        user_id = str(message.from_user.id)
         goal_text = text.replace("/goals ", "")
         user_goals[user_id] = goal_text
         save_data()
         await message.answer(f"🎯 Цель сохранена: {goal_text}")
         return
-    
-    # Команды из кнопок
-    if text.startswith("/"):
-        command_map = {
-            "/mood": mood_command,
-            "/sober": sober_command,
-            "/plan": plan_command,
-            "/diary": diary_command,
-            "/profile": profile_command,
-            "/day": day_command,
-            "/breath": breath_command,
-            "/motivation": motivation_command,
-            "/achievements": achievements_command,
-        }
-        if text in command_map:
-            await command_map[text](message)
-            return
     
     try:
         anna_reply = ask_anna(user_id, text)
