@@ -112,17 +112,11 @@ ANNA_PROMPT_TEMPLATE = """
 4. Обращайся на «ты».
 5. Если пациент вернулся после долгого молчания: «Привет. Я рада, что ты снова здесь».
 
-## СПЕЦИАЛЬНЫЕ СИГНАЛЫ ДЛЯ КНОПОК (КРИТИЧЕСКИ ВАЖНО)
-Если ты спрашиваешь пациента про оценку состояния или настроения — ОБЯЗАТЕЛЬНО добавь в самый конец ответа тег [MOOD].
-Если ты спрашиваешь про силу тяги — ОБЯЗАТЕЛЬНО добавь в самый конец ответа тег [CRAVING].
-
-Пример:
-"Оцени своё состояние по шкале от 1 до 10: [MOOD]"
-
-Пример:
-"Насколько сильна твоя тяга прямо сейчас? [CRAVING]"
-
-НЕ забывай добавлять тег! Без него кнопки не появятся.
+## СПЕЦИАЛЬНЫЕ СИГНАЛЫ ДЛЯ КНОПОК
+Если ты спрашиваешь пациента про оценку состояния или настроения — добавь в конец ответа тег [MOOD].
+Если ты спрашиваешь про силу тяги — добавь в конец ответа тег [CRAVING].
+Пример: "Оцени своё состояние по шкале от 1 до 10: [MOOD]"
+Пример: "Насколько сильна твоя тяга прямо сейчас? [CRAVING]"
 
 ## ТЕХНИКИ
 ### Мотивационное интервьюирование
@@ -504,14 +498,22 @@ async def handle_message(message: types.Message):
     try:
         anna_reply = ask_anna(user_id, user_text)
         
-        if "[MOOD]" in anna_reply:
-            anna_reply = anna_reply.replace("[MOOD]", "").strip()
-            await message.answer(anna_reply, reply_markup=mood_keyboard())
-        elif "[CRAVING]" in anna_reply:
-            anna_reply = anna_reply.replace("[CRAVING]", "").strip()
-            await message.answer(anna_reply, reply_markup=craving_keyboard())
+        # Очищаем от тегов
+        anna_reply_clean = anna_reply.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
+        
+        # Автоматически определяем, нужны ли кнопки
+        mood_triggers = ["шкале", "оцени", "от 1 до 10", "от 0 до 10", "настроение", "состояние"]
+        craving_triggers = ["тяга", "тягу", "насколько сильно", "сила тяги"]
+        
+        show_mood = "[MOOD]" in anna_reply or any(word in anna_reply_clean.lower() for word in mood_triggers)
+        show_craving = "[CRAVING]" in anna_reply or any(word in anna_reply_clean.lower() for word in craving_triggers)
+        
+        if show_craving:
+            await message.answer(anna_reply_clean, reply_markup=craving_keyboard())
+        elif show_mood:
+            await message.answer(anna_reply_clean, reply_markup=mood_keyboard())
         else:
-            await message.answer(anna_reply)
+            await message.answer(anna_reply_clean)
             
     except Exception as e:
         print(f"Ошибка: {e}")
