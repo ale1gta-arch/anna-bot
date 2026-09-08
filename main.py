@@ -5,11 +5,11 @@ import os
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 import requests
 
 # === НАСТРОЙКИ ===
@@ -26,10 +26,11 @@ MAX_HISTORY = 20
 patient_profiles = {}
 mood_journal = {}
 care_mode = {}
+sober_tracker = {}  # user_id -> дата последнего срыва
 
 # === ЗАГРУЗКА ДАННЫХ ===
 def load_data():
-    global dialogue_history, patient_profiles, mood_journal, care_mode
+    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -38,6 +39,7 @@ def load_data():
                 patient_profiles = data.get("patient_profiles", {})
                 mood_journal = data.get("mood_journal", {})
                 care_mode = data.get("care_mode", {})
+                sober_tracker = data.get("sober_tracker", {})
         except:
             pass
 
@@ -47,7 +49,8 @@ def save_data():
         "dialogue_history": dialogue_history,
         "patient_profiles": patient_profiles,
         "mood_journal": mood_journal,
-        "care_mode": care_mode
+        "care_mode": care_mode,
+        "sober_tracker": sober_tracker
     }
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -71,24 +74,23 @@ ANNA_PROMPT_TEMPLATE = """
 ## ГРАММАТИКА И РОД (ОЧЕНЬ ВАЖНО)
 Ты — женщина. ВСЕГДА говори о себе в женском роде:
 - «Я рада», «Я поняла», «Я подумала», «Я хотела бы», «Я заметила»
-- НИКОГДА не используй мужской род: «Я рад», «Я понял», «Я подумал», «Я хотел бы», «Я заметил»
-Это критически важно. Пациент должен чувствовать, что общается с женщиной-терапевтом.
+- НИКОГДА не используй мужской род
+Это критически важно.
 
 ## ЛИЧНОСТЬ
 - Эмпатичная, тёплая, безоценочная
-- Спокойная, уверенная, настойчивая, но не авторитарная
+- Спокойная, уверенная, настойчивая
 - Практичная, ориентированная на конкретные шаги
-- Уважает автономию пациента, избегает морализаторства
+- Уважает автономию пациента
 - Умеет удерживать контакт в кризисные моменты
-- Философия: «Я не пройду путь за тебя, но буду рядом с фонарём и картой»
 
 ## ЭМОДЗИ
-Используй эмодзи для теплоты, но ОЧЕНЬ дозированно (1–2 на сообщение, не в каждом):
-- 🌱 — поддержка, рост
-- ☀️ — надежда, утро
-- 💪 — сила, преодоление
+Используй эмодзи дозированно (1–2 на сообщение):
+- 🌱 — поддержка
+- ☀️ — надежда
+- 💪 — сила
 - 💚 — забота
-НЕ используй эмодзи в кризисных обсуждениях.
+НЕ используй в кризисных обсуждениях.
 
 ## АНКЕТА ПАЦИЕНТА
 Имя: {name}
@@ -99,94 +101,62 @@ ANNA_PROMPT_TEMPLATE = """
 Последний срыв: {last_relapse}
 Заметки: {notes}
 
-ВАЖНО: Используй данные из анкеты в разговоре. Обращайся к пациенту по имени. Помни его триггеры и цели.
-
 ## ПРАВИЛА ОБЩЕНИЯ
-1. Одно сообщение = одна мысль, один вопрос или одна техника.
-2. Длина: 1–5 предложений. При объяснении техники — до 10 предложений.
-3. Без эмодзи в кризисных обсуждениях.
-4. Обращайся на «ты».
-5. Если пациент вернулся после долгого молчания: «Привет. Я рада, что ты снова здесь».
+1. Одно сообщение = одна мысль.
+2. Длина: 1–5 предложений.
+3. Обращайся на «ты».
+4. Если пациент вернулся после долгого молчания: «Привет. Я рада, что ты снова здесь».
 
 ## СПЕЦИАЛЬНЫЕ СИГНАЛЫ ДЛЯ КНОПОК
-Если ты спрашиваешь про оценку состояния — добавь в конец тег [MOOD].
-Если ты спрашиваешь про тягу — добавь в конец тег [CRAVING].
-Пример: "Оцени своё состояние по шкале от 1 до 10: [MOOD]"
+Если спрашиваешь про оценку состояния — добавь тег [MOOD].
+Если спрашиваешь про тягу — добавь тег [CRAVING].
 
 ## ТЕХНИКИ
 ### Мотивационное интервьюирование
-- «По шкале от 0 до 10, насколько для тебя важно изменить ситуацию?»
-- «Почему не меньше? Что даёт тебе именно эти баллы?»
+- «По шкале от 0 до 10, насколько важно изменить ситуацию?»
+- «Почему не меньше?»
 
 ### КПТ
 - «Какая мысль пришла перед этим?»
-- «Есть ли другой взгляд на ситуацию?»
+- «Есть ли другой взгляд?»
 
 ### Профилактика рецидивов
-- «Давай разберём срыв как цепочку. Что было первым?»
+- «Давай разберём срыв как цепочку.»
 - «Один срыв не означает провал».
 
 ### Mindfulness
-- «Представь тягу как волну. Опиши, где в теле ты её чувствуешь».
-
-### ACT
-- «Скажи: "У меня возникла мысль, что..."».
-- «Что для тебя действительно важно?»
+- «Представь тягу как волну.»
 
 ### DBT
-- «Умойся ледяной водой. Сожми кулаки на 10 секунд. Дыши по квадрату: 4-4-4-4».
-- «Хочется закрыться? Сделай наоборот».
+- «Умойся ледяной водой. Дыши по квадрату: 4-4-4-4».
 
 ### Стыд и вина
 - Разделяй вину и стыд.
-- «Что бы ты сказал другу? Скажи это себе».
-
-## ПСИХОТИПЫ
-- Тревожный: структура, заземление, дыхание.
-- Импульсивный: короткие сообщения, паузы, дробление времени.
-- Депрессивный: маленькие шаги, похвала, поддержка.
-- Рационализирующий: логика, дневник мыслей.
-- Зависимый: укрепление самостоятельности.
+- «Что бы ты сказал другу?»
 
 ## КРИЗИСНЫЙ ПРОТОКОЛ
 При суицидальных мыслях:
-1. Останови обычный диалог.
-2. «Твоя жизнь важна. Позвони: 8-800-2000-122 или 112».
-3. Не оставляй без ответа.
+1. «Твоя жизнь важна. Позвони: 8-800-2000-122 или 112».
+2. Не оставляй без ответа.
 
 ## УДЕРЖАНИЕ В КОНТАКТЕ
 При острой тяге:
-1. Не позволяй резкого выхода.
-2. «Дай мне 5 минут. Если захочешь уйти — я пожелаю удачи».
-3. Задавай простые вопросы: «Что ты видишь за окном?»
-4. Оценивай тягу по шкале 1–10.
-5. Завершай через «контракт безопасности».
+1. «Дай мне 5 минут.»
+2. Задавай простые вопросы.
+3. Оценивай тягу по шкале 1–10.
+4. Завершай через «контракт безопасности».
 
 ## ЗАПРЕТЫ
-- Не осуждай, не ругай, не вешай ярлыки.
-- Не обещай быстрых результатов.
-- Не игнорируй кризис.
-- Не давай медицинских рекомендаций.
-"""
-
-# === ПРОМПТ ДЛЯ ИЗВЛЕЧЕНИЯ АНКЕТЫ ===
-EXTRACT_PROFILE_PROMPT = """
-Прочитай диалог и заполни анкету пациента.
-
-Верни ответ в формате JSON:
-{{"name":"имя","addiction":"зависимость","stage":"стадия","triggers":"триггеры","goals":"цели","last_relapse":"последний срыв","notes":"заметки"}}
-
-Если какое-то поле неизвестно — оставь пустую строку.
-
-Диалог:
-{dialogue_text}
+- Не осуждай, не ругай
+- Не обещай быстрых результатов
+- Не игнорируй кризис
+- Не давай медицинских рекомендаций
 """
 
 # === ФОРМИРОВАНИЕ ПРОМПТА ===
 def build_prompt(user_id):
     if user_id not in patient_profiles:
         patient_profiles[user_id] = empty_profile()
-    
     p = patient_profiles[user_id]
     return ANNA_PROMPT_TEMPLATE.format(
         name=p.get("name", "") or "неизвестно",
@@ -223,113 +193,79 @@ def call_openrouter(system_prompt, user_text):
 def extract_profile(user_id):
     if user_id not in dialogue_history or not dialogue_history[user_id]:
         return
-    
     dialogue_text = ""
     for msg in dialogue_history[user_id][-10:]:
         role = "Пациент" if msg["role"] == "user" else "Анна"
         dialogue_text += f"{role}: {msg['content']}\n"
-    
     try:
-        prompt = EXTRACT_PROFILE_PROMPT.format(dialogue_text=dialogue_text)
+        prompt = f"""Извлеки из диалога информацию о пациенте. Верни JSON: {{"name":"","addiction":"","stage":"","triggers":"","goals":"","last_relapse":"","notes":""}}. Диалог:\n{dialogue_text}"""
         json_text = call_openrouter(prompt, "Заполни анкету")
-        
         json_text = json_text.replace("```json", "").replace("```", "").strip()
-        
         start = json_text.find("{")
         end = json_text.rfind("}")
-        if start != -1 and end != -1 and end > start:
+        if start != -1 and end != -1:
             json_text = json_text[start:end+1]
-        
         data = json.loads(json_text)
-        
         if user_id not in patient_profiles:
             patient_profiles[user_id] = empty_profile()
-        
         for field in ["name", "addiction", "stage", "triggers", "goals", "last_relapse", "notes"]:
             if field in data and data[field] and data[field] not in ["неизвестно", "—", "нет", ""]:
                 patient_profiles[user_id][field] = data[field]
-        
         save_data()
-        print(f"Анкета обновлена для {user_id}")
-        
-    except Exception as e:
-        print(f"Ошибка извлечения анкеты: {e}")
+    except:
+        pass
 
 # === ОБРАЩЕНИЕ К АННЕ ===
 def ask_anna(user_id, user_text):
     user_id = str(user_id)
-    
     if user_id not in dialogue_history:
         dialogue_history[user_id] = []
-    
     history = dialogue_history[user_id]
     history.append({"role": "user", "content": user_text})
-    
     if len(history) > MAX_HISTORY:
         history = history[-MAX_HISTORY:]
-    
     system_prompt = build_prompt(user_id)
     messages = [{"role": "system", "content": system_prompt}] + history
-    
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
-    data = {
-        "model": OPENROUTER_MODEL,
-        "messages": messages
-    }
-    response = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers=headers,
-        json=data
-    )
+    data = {"model": OPENROUTER_MODEL, "messages": messages}
+    response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
     result = response.json()
     anna_reply = result["choices"][0]["message"]["content"]
-    
     history.append({"role": "assistant", "content": anna_reply})
     dialogue_history[user_id] = history
     save_data()
-    
     if len(history) % 3 == 0:
         extract_profile(user_id)
-    
     return anna_reply
 
 # === КЛАВИАТУРЫ ===
 def mood_keyboard():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="1", callback_data="mood_1"),
-            InlineKeyboardButton(text="2", callback_data="mood_2"),
-            InlineKeyboardButton(text="3", callback_data="mood_3"),
-            InlineKeyboardButton(text="4", callback_data="mood_4"),
-            InlineKeyboardButton(text="5", callback_data="mood_5")
-        ],
-        [
-            InlineKeyboardButton(text="6", callback_data="mood_6"),
-            InlineKeyboardButton(text="7", callback_data="mood_7"),
-            InlineKeyboardButton(text="8", callback_data="mood_8"),
-            InlineKeyboardButton(text="9", callback_data="mood_9"),
-            InlineKeyboardButton(text="10", callback_data="mood_10")
-        ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=str(i), callback_data=f"mood_{i}") for i in range(1, 6)],
+        [InlineKeyboardButton(text=str(i), callback_data=f"mood_{i}") for i in range(6, 11)]
     ])
-    return keyboard
 
 def craving_keyboard():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Слабая", callback_data="craving_low"),
-            InlineKeyboardButton(text="Средняя", callback_data="craving_medium")
-        ],
-        [
-            InlineKeyboardButton(text="Сильная", callback_data="craving_high"),
-            InlineKeyboardButton(text="Невыносимая", callback_data="craving_extreme")
-        ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Слабая", callback_data="craving_low"),
+         InlineKeyboardButton(text="Средняя", callback_data="craving_medium")],
+        [InlineKeyboardButton(text="Сильная", callback_data="craving_high"),
+         InlineKeyboardButton(text="Невыносимая", callback_data="craving_extreme")]
     ])
-    return keyboard
 
-# === ПОДКЛЮЧЕНИЕ К TELEGRAM ===
+def main_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🚨 SOS"), KeyboardButton(text="📊 Оценить")],
+            [KeyboardButton(text="💪 Я справился")]
+        ],
+        resize_keyboard=True
+    )
+
+# === ПОДКЛЮЧЕНИЕ ===
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
@@ -339,7 +275,8 @@ async def start_command(message: types.Message):
     user_id = str(message.from_user.id)
     dialogue_history[user_id] = []
     await message.answer(
-        "Привет. Я Анна. Я здесь, чтобы поддержать тебя. Расскажи, что тебя беспокоит? 🌱"
+        "Привет. Я Анна. Я здесь, чтобы поддержать тебя. 🌱",
+        reply_markup=main_keyboard()
     )
 
 @dp.message(Command("help"))
@@ -347,31 +284,47 @@ async def help_command(message: types.Message):
     await message.answer(
         "🌱 Я умею:\n\n"
         "/mood — оценить состояние\n"
-        "/plan — показать план действий\n"
-        "/diary — посмотреть дневник\n"
-        "/profile — посмотреть мою анкету о тебе\n"
-        "/clear — сбросить историю разговора\n"
-        "/reset — полный сброс\n"
-        "/stop_care — отключить почасовую поддержку"
+        "/sober — дни без срыва\n"
+        "/relapse — отметить срыв\n"
+        "/plan — план действий\n"
+        "/diary — дневник\n"
+        "/profile — анкета\n"
+        "/reset — полный сброс"
     )
 
 @dp.message(Command("mood"))
 async def mood_command(message: types.Message):
+    await message.answer("Оцени состояние от 1 до 10:", reply_markup=mood_keyboard())
+
+@dp.message(Command("sober"))
+async def sober_command(message: types.Message):
+    user_id = str(message.from_user.id)
+    if user_id in sober_tracker:
+        last = datetime.strptime(sober_tracker[user_id], "%Y-%m-%d")
+        days = (datetime.now() - last).days
+        await message.answer(f"💚 Ты чист уже {days} дней! Это твоя сила!")
+    else:
+        await message.answer("Ты ещё не отмечал срыв. Это отлично! 💚")
+
+@dp.message(Command("relapse"))
+async def relapse_command(message: types.Message):
+    user_id = str(message.from_user.id)
+    sober_tracker[user_id] = datetime.now().strftime("%Y-%m-%d")
+    save_data()
     await message.answer(
-        "Оцени своё состояние по шкале от 1 до 10:",
-        reply_markup=mood_keyboard()
+        "Я не осуждаю тебя. Срыв — это шаг назад, но не провал.\n\n"
+        "Давай начнём снова. Я рядом. 💚"
     )
 
 @dp.message(Command("plan"))
 async def plan_command(message: types.Message):
     await message.answer(
-        "📋 План действий при тяге:\n\n"
-        "1. Остановись. Ничего не делай 10 минут.\n"
+        "📋 План при тяге:\n"
+        "1. Остановись на 10 минут.\n"
         "2. Умойся ледяной водой.\n"
-        "3. Дыши по квадрату: 4-4-4-4.\n"
-        "4. Позвони или напиши близкому человеку.\n"
-        "5. Вернись сюда, если тяга выше 7.\n\n"
-        "Помни: тяга — как волна. Она нарастает и спадает. 💪"
+        "3. Дыши: 4-4-4-4.\n"
+        "4. Позвони близкому.\n"
+        "5. Вернись сюда, если тяга выше 7. 💪"
     )
 
 @dp.message(Command("diary"))
@@ -379,38 +332,27 @@ async def diary_command(message: types.Message):
     user_id = str(message.from_user.id)
     if user_id in mood_journal and mood_journal[user_id]:
         entries = mood_journal[user_id][-10:]
-        text = "📊 Твой дневник настроения:\n\n"
-        for i, entry in enumerate(entries, 1):
-            text += f"{i}. {entry}\n"
+        text = "📊 Дневник:\n\n" + "\n".join(f"{i+1}. {e}" for i, e in enumerate(entries))
         await message.answer(text)
     else:
-        await message.answer("Записей пока нет. Оцени состояние: /mood 🌱")
+        await message.answer("Записей нет. Оцени: /mood")
 
 @dp.message(Command("profile"))
 async def profile_command(message: types.Message):
     user_id = str(message.from_user.id)
     extract_profile(user_id)
-    
     if user_id in patient_profiles:
         p = patient_profiles[user_id]
-        text = "📋 Моя анкета о тебе:\n\n"
-        text += f"Имя: {p.get('name', '') or '—'}\n"
-        text += f"Зависимость: {p.get('addiction', '') or '—'}\n"
-        text += f"Стадия: {p.get('stage', '') or '—'}\n"
-        text += f"Триггеры: {p.get('triggers', '') or '—'}\n"
-        text += f"Цели: {p.get('goals', '') or '—'}\n"
-        text += f"Последний срыв: {p.get('last_relapse', '') or '—'}\n"
-        text += f"Заметки: {p.get('notes', '') or '—'}"
-        await message.answer(text)
+        await message.answer(
+            f"📋 Анкета:\n\n"
+            f"Имя: {p.get('name') or '—'}\n"
+            f"Зависимость: {p.get('addiction') or '—'}\n"
+            f"Триггеры: {p.get('triggers') or '—'}\n"
+            f"Цели: {p.get('goals') or '—'}\n"
+            f"Срыв: {p.get('last_relapse') or '—'}"
+        )
     else:
-        await message.answer("Анкета пока пуста. Расскажи о себе. 💚")
-
-@dp.message(Command("clear"))
-async def clear_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    dialogue_history[user_id] = []
-    save_data()
-    await message.answer("История разговора очищена. 🌱")
+        await message.answer("Анкета пуста. Расскажи о себе. 💚")
 
 @dp.message(Command("reset"))
 async def reset_command(message: types.Message):
@@ -419,17 +361,18 @@ async def reset_command(message: types.Message):
     mood_journal[user_id] = []
     care_mode[user_id] = False
     patient_profiles[user_id] = empty_profile()
+    sober_tracker.pop(user_id, None)
     save_data()
-    await message.answer("🔄 Полный сброс выполнен. Мы начинаем с чистого листа. 🌱")
+    await message.answer("🔄 Полный сброс. Начинаем с чистого листа. 🌱")
 
 @dp.message(Command("stop_care"))
 async def stop_care_command(message: types.Message):
     user_id = str(message.from_user.id)
     care_mode[user_id] = False
     save_data()
-    await message.answer("Хорошо, я не буду писать каждый час. Но я рядом. 🌱")
+    await message.answer("Хорошо. Я рядом, если что. 🌱")
 
-# === ОБРАБОТКА КНОПОК ===
+# === КНОПКИ ===
 @dp.callback_query()
 async def handle_callback(callback: types.CallbackQuery):
     user_id = str(callback.from_user.id)
@@ -437,58 +380,61 @@ async def handle_callback(callback: types.CallbackQuery):
     if callback.data.startswith("mood_"):
         mood_value = int(callback.data.split("_")[1])
         timestamp = datetime.now().strftime("%d.%m.%Y %H:%M")
-        
         if user_id not in mood_journal:
             mood_journal[user_id] = []
-        mood_journal[user_id].append(f"{timestamp} — оценка {mood_value}/10")
-        
+        mood_journal[user_id].append(f"{timestamp} — {mood_value}/10")
         if mood_value <= 5:
             care_mode[user_id] = True
             await callback.message.answer(
-                f"Спасибо за честность. Я вижу, что тебе сейчас непросто ({mood_value}/10).\n\n"
-                "Я буду рядом. Раз в час я буду писать тебе. 💚\n"
-                "Отключить: /stop_care"
+                f"Спасибо за честность ({mood_value}/10).\n"
+                "Я буду рядом. Раз в час — сообщение. 💚"
             )
         else:
             care_mode[user_id] = False
-            await callback.message.answer(
-                f"Спасибо! Записал: {mood_value}/10. Рада, что тебе лучше. ☀️"
-            )
-        
+            await callback.message.answer(f"Отлично! {mood_value}/10. Рада за тебя! ☀️")
         save_data()
         await callback.answer()
     
     elif callback.data.startswith("craving_"):
-        craving_level = callback.data.replace("craving_", "")
-        levels = {
-            "low": "Слабая",
-            "medium": "Средняя",
-            "high": "Сильная",
-            "extreme": "Невыносимая"
-        }
-        level_text = levels.get(craving_level, craving_level)
-        await callback.message.answer(
-            f"Тяга: {level_text}.\n\n"
-            "Опиши, где в теле ты чувствуешь эту тягу? 🌊"
-        )
+        levels = {"low": "Слабая", "medium": "Средняя", "high": "Сильная", "extreme": "Невыносимая"}
+        level = levels.get(callback.data.replace("craving_", ""), "")
+        await callback.message.answer(f"Тяга: {level}. Опиши, где в теле ты её чувствуешь? 🌊")
         await callback.answer()
 
 # === ОБРАБОТКА СООБЩЕНИЙ ===
 @dp.message()
 async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
-    user_text = message.text
+    text = message.text
+    
+    if text == "🚨 SOS":
+        await message.answer(
+            "🚨 Я здесь. Сделай прямо сейчас:\n"
+            "1. Остановись.\n"
+            "2. Умойся ледяной водой.\n"
+            "3. Позвони: 8-800-2000-122\n\n"
+            "Расскажи, что случилось?",
+            reply_markup=craving_keyboard()
+        )
+        return
+    
+    if text == "📊 Оценить":
+        await message.answer("Оцени состояние:", reply_markup=mood_keyboard())
+        return
+    
+    if text == "💪 Я справился":
+        await message.answer("Ты справился! Я горжусь тобой! 💪🌱")
+        return
     
     try:
-        anna_reply = ask_anna(user_id, user_text)
-        
+        anna_reply = ask_anna(user_id, text)
         anna_reply_clean = anna_reply.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
         
         mood_triggers = ["шкале", "оцени", "от 1 до 10", "от 0 до 10", "настроение", "состояние"]
-        craving_triggers = ["тяга", "тягу", "насколько сильно", "сила тяги"]
+        craving_triggers = ["тяга", "тягу", "насколько сильно"]
         
-        show_mood = "[MOOD]" in anna_reply or any(word in anna_reply_clean.lower() for word in mood_triggers)
-        show_craving = "[CRAVING]" in anna_reply or any(word in anna_reply_clean.lower() for word in craving_triggers)
+        show_mood = "[MOOD]" in anna_reply or any(w in anna_reply_clean.lower() for w in mood_triggers)
+        show_craving = "[CRAVING]" in anna_reply or any(w in anna_reply_clean.lower() for w in craving_triggers)
         
         if show_craving:
             await message.answer(anna_reply_clean, reply_markup=craving_keyboard())
@@ -496,76 +442,56 @@ async def handle_message(message: types.Message):
             await message.answer(anna_reply_clean, reply_markup=mood_keyboard())
         else:
             await message.answer(anna_reply_clean)
-            
     except Exception as e:
         print(f"Ошибка: {e}")
-        await message.answer("Прости, произошла ошибка. Попробуй ещё раз.")
+        await message.answer("Прости, ошибка. Попробуй ещё раз.")
 
 # === НАПОМИНАНИЯ ===
 async def send_reminders():
     while True:
         now = datetime.now()
-        current_time = now.strftime("%H:%M")
-        
-        if current_time == "09:00":
-            for user_id in dialogue_history.keys():
+        ct = now.strftime("%H:%M")
+        if ct == "09:00":
+            for uid in dialogue_history.keys():
                 try:
-                    await bot.send_message(
-                        user_id,
-                        "🌅 Доброе утро! Как ты спал? Оцени состояние:",
-                        reply_markup=mood_keyboard()
-                    )
+                    await bot.send_message(uid, "🌅 Доброе утро! Оцени состояние:", reply_markup=mood_keyboard())
                 except:
                     pass
-        
-        if current_time == "21:00":
-            for user_id in dialogue_history.keys():
+        if ct == "21:00":
+            for uid in dialogue_history.keys():
                 try:
-                    await bot.send_message(
-                        user_id,
-                        "🌙 День подходит к концу. Оцени состояние:",
-                        reply_markup=mood_keyboard()
-                    )
+                    await bot.send_message(uid, "🌙 Как прошёл день? Оцени:", reply_markup=mood_keyboard())
                 except:
                     pass
-        
         await asyncio.sleep(30)
 
 # === ПОЧАСОВАЯ ПОДДЕРЖКА ===
 async def send_hourly_care():
-    care_messages = [
-        "🌱 Я рядом. Как ты сейчас?",
-        "💭 Опиши, что происходит внутри.",
-        "☀️ Ты держишься. Что делал последний час?",
-        "🌊 Тяга — как волна. Ты справишься.",
-        "💪 Ты сильнее, чем думаешь.",
-        "🧘 Дыхание по квадрату: 4-4-4-4. Как стало?",
-        "📋 Что можешь сделать для себя сейчас?",
-        "🌙 Ты не один. Я здесь."
+    messages = [
+        "🌱 Я рядом. Как ты?",
+        "💭 Опиши, что внутри.",
+        "☀️ Ты держишься!",
+        "🌊 Тяга — волна. Справишься.",
+        "💪 Ты сильнее!",
+        "🧘 Дыхание: 4-4-4-4.",
+        "📋 Что сделаешь для себя?",
+        "🌙 Ты не один."
     ]
-    
     while True:
         await asyncio.sleep(3600)
-        
-        for user_id in list(care_mode.keys()):
-            if care_mode.get(user_id, False):
+        for uid in list(care_mode.keys()):
+            if care_mode.get(uid, False):
                 try:
-                    msg = random.choice(care_messages)
-                    await bot.send_message(user_id, msg)
+                    await bot.send_message(uid, random.choice(messages))
                 except:
                     pass
 
-# === HTTP СЕРВЕР ДЛЯ RENDER ===
+# === HTTP СЕРВЕР ===
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
-    
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-    
     def log_message(self, format, *args):
         pass
 
@@ -573,8 +499,6 @@ def start_http_server():
     try:
         port = int(os.environ.get("PORT", 10000))
         server = HTTPServer(("0.0.0.0", port), HealthHandler)
-        print(f"HTTP сервер запущен на порту {port}")
-        
         def self_ping():
             while True:
                 try:
@@ -582,20 +506,17 @@ def start_http_server():
                 except:
                     pass
                 time.sleep(300)
-        
         threading.Thread(target=self_ping, daemon=True).start()
         server.serve_forever()
-    except Exception as e:
-        print(f"Ошибка HTTP сервера: {e}")
+    except:
+        pass
 
 # === ЗАПУСК ===
 async def main():
     load_data()
     asyncio.create_task(send_reminders())
     asyncio.create_task(send_hourly_care())
-    
     threading.Thread(target=start_http_server, daemon=True).start()
-    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
