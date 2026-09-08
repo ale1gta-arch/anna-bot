@@ -31,7 +31,7 @@ sober_tracker = {}
 user_goals = {}
 congratulated = {}
 relapse_times = []
-user_timezones = {}  # user_id -> смещение в часах
+user_timezones = {}
 
 # === ЗАГРУЗКА ===
 def load_data():
@@ -406,9 +406,13 @@ async def start_command(message: types.Message):
     user_id = str(message.from_user.id)
     dialogue_history[user_id] = []
     await message.answer(
-        "Привет. Я Анна. Я рядом. 🌱\n"
-        "Напиши /time +3, чтобы указать свой часовой пояс (например, Москва: /time +3).",
-        reply_markup=menu_keyboard()
+        "Привет. Я Анна. Я рядом. 🌱\n\n"
+        "Чтобы я отправляла напоминания в удобное для тебя время, скажи: в каком ты часовом поясе?\n\n"
+        "Напиши просто число, например:\n"
+        "• +3 — Москва\n"
+        "• +0 — Лондон\n"
+        "• -5 — Нью-Йорк\n"
+        "• +9 — Токио"
     )
 
 @dp.message(Command("time"))
@@ -416,7 +420,7 @@ async def time_command(message: types.Message):
     user_id = str(message.from_user.id)
     text = message.text.replace("/time", "").strip()
     try:
-        offset = int(text.replace("+", "").replace("-", "-"))
+        offset = int(text.replace("+", ""))
         if -12 <= offset <= 14:
             user_timezones[user_id] = offset
             save_data()
@@ -589,6 +593,21 @@ async def handle_callback(callback: types.CallbackQuery):
 async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
     text = message.text
+    
+    # Обработка часового пояса
+    if re.match(r'^[+-]?\d{1,2}$', text):
+        offset = int(text.replace("+", ""))
+        if -12 <= offset <= 14:
+            user_timezones[user_id] = offset
+            save_data()
+            await message.answer(
+                f"✅ Запомнила! Твой часовой пояс: UTC {offset:+d}\n"
+                "Теперь напоминания будут приходить в твоё время. 💚",
+                reply_markup=menu_keyboard()
+            )
+        else:
+            await message.answer("Введи число от -12 до +14. Например: +3")
+        return
     
     if text == "📱 Команды":
         await message.answer("Выбери:", reply_markup=commands_keyboard())
