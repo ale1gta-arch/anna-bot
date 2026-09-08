@@ -226,11 +226,11 @@ def menu_keyboard():
 def commands_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📊 Оценка /mood"), KeyboardButton(text="💚 Трезвость /sober")],
-            [KeyboardButton(text="📋 План /plan"), KeyboardButton(text="📖 Дневник /diary")],
-            [KeyboardButton(text="👤 Анкета /profile"), KeyboardButton(text="📅 Сегодня /day")],
-            [KeyboardButton(text="🎯 Цели /goals"), KeyboardButton(text="🧘 Дыхание /breath")],
-            [KeyboardButton(text="💪 Мотивация /motivation"), KeyboardButton(text="🏆 Успехи /achievements")],
+            [KeyboardButton(text="📊 Оценка"), KeyboardButton(text="💚 Трезвость")],
+            [KeyboardButton(text="📋 План"), KeyboardButton(text="📖 Дневник")],
+            [KeyboardButton(text="👤 Анкета"), KeyboardButton(text="📅 Сегодня")],
+            [KeyboardButton(text="🎯 Цели"), KeyboardButton(text="🧘 Дыхание")],
+            [KeyboardButton(text="💪 Мотивация"), KeyboardButton(text="🏆 Успехи")],
             [KeyboardButton(text="⬅️ Назад")]
         ],
         resize_keyboard=True
@@ -258,8 +258,7 @@ async def start_command(message: types.Message):
     user_id = str(message.from_user.id)
     dialogue_history[user_id] = []
     await message.answer(
-        "Привет. Я Анна. Я здесь, чтобы поддержать тебя. 🌱\n"
-        "Напиши /menu для кнопок.",
+        "Привет. Я Анна. Я здесь, чтобы поддержать тебя. 🌱",
         reply_markup=menu_keyboard()
     )
 
@@ -443,8 +442,9 @@ async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
     text = message.text
     
+    # Кнопки главного меню
     if text == "📱 Команды":
-        await message.answer("Выбери команду:", reply_markup=commands_keyboard())
+        await message.answer("Выбери действие:", reply_markup=commands_keyboard())
         return
     
     if text == "⬅️ Назад":
@@ -455,7 +455,7 @@ async def handle_message(message: types.Message):
         await message.answer("🚨 Я здесь. Позвони: 8-800-2000-122. Что случилось?", reply_markup=craving_keyboard())
         return
     
-    if text == "📊 Оценить":
+    if text == "📊 Оценить" or text == "📊 Оценка":
         await message.answer("Оцени состояние:", reply_markup=mood_keyboard())
         return
     
@@ -463,18 +463,17 @@ async def handle_message(message: types.Message):
         await message.answer("Ты справился! Горжусь! 💪🌱")
         return
     
-    # Кнопки с командами
+    # Кнопки команд
     command_buttons = {
-        "📊 Оценка /mood": mood_command,
-        "💚 Трезвость /sober": sober_command,
-        "📋 План /plan": plan_command,
-        "📖 Дневник /diary": diary_command,
-        "👤 Анкета /profile": profile_command,
-        "📅 Сегодня /day": day_command,
-        "🎯 Цели /goals": goals_command,
-        "🧘 Дыхание /breath": breath_command,
-        "💪 Мотивация /motivation": motivation_command,
-        "🏆 Успехи /achievements": achievements_command,
+        "💚 Трезвость": sober_command,
+        "📋 План": plan_command,
+        "📖 Дневник": diary_command,
+        "👤 Анкета": profile_command,
+        "📅 Сегодня": day_command,
+        "🎯 Цели": goals_command,
+        "🧘 Дыхание": breath_command,
+        "💪 Мотивация": motivation_command,
+        "🏆 Успехи": achievements_command,
     }
     
     if text in command_buttons:
