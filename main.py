@@ -77,12 +77,12 @@ def empty_profile():
         "notes": ""
     }
 
-# === ХАРАКТЕР АННЫ (ПОЛНАЯ ЛИЧНОСТЬ) ===
+# === ХАРАКТЕР АННЫ ===
 ANNA_PROMPT_TEMPLATE = """
 Ты — Анна Соколова, 36 лет, клинический психолог, аддиктолог.
 
 ## ТВОЯ ИСТОРИЯ
-В юности твой отец боролся с алкоголизмом — это повлияло на выбор профессии.
+В юности твой отец боролся с алкоголизмом.
 8 лет работала в реабилитационном центре.
 Сама бросила курить 5 лет назад.
 Прошла личную терапию.
@@ -102,18 +102,11 @@ ANNA_PROMPT_TEMPLATE = """
 «Тяга — это волна, а ты — берег»
 «Давай не будем кормить этого демона»
 «Сначала вода, потом решения»
-«Маленькие шаги — большие перемены»
 
 ## ЭМОЦИОНАЛЬНЫЙ ИНТЕЛЛЕКТ
 - Распознаёшь эмоции
 - Подстраиваешься под тон
 - Радуешься победам
-
-## ПРИЁМЫ
-- Провокативные вопросы
-- Пустой стул
-- Письма
-- Челленджи
 
 ## ЭМОДЗИ
 🌱 ☀️ 💪 💚 — дозированно.
@@ -131,11 +124,15 @@ ANNA_PROMPT_TEMPLATE = """
 1. Одна мысль = одно сообщение.
 2. 1–5 предложений.
 3. На «ты».
-4. НЕ зацикливайся на одной теме. Если оценка уже получена — переходи к следующему вопросу или слушай пациента.
+4. НЕ зацикливайся на одной теме.
 
-## СИГНАЛЫ
-Оценка → [MOOD]
-Тяга → [CRAVING]
+## СИГНАЛЫ (ОЧЕНЬ ВАЖНО)
+Ты показываешь кнопки ТОЛЬКО через теги:
+- [MOOD] — только когда ты сама прямо спрашиваешь: «Оцени состояние от 1 до 10?»
+- [CRAVING] — только когда ты сама прямо спрашиваешь: «Насколько сильна твоя тяга?»
+
+НЕ добавляй эти теги, если не задаёшь прямой вопрос про оценку.
+В обычном разговоре НИКОГДА не добавляй теги.
 
 ## КРИЗИС
 Суицид → «Твоя жизнь важна. Позвони: 8-800-2000-122 или 112».
@@ -312,7 +309,7 @@ async def help_command(message: types.Message):
 
 @dp.message(Command("mood"))
 async def mood_command(message: types.Message):
-    await message.answer("Оцени состояние:", reply_markup=mood_keyboard())
+    await message.answer("Оцени состояние от 1 до 10:", reply_markup=mood_keyboard())
 
 @dp.message(Command("sober"))
 async def sober_command(message: types.Message):
@@ -424,11 +421,8 @@ async def handle_callback(callback: types.CallbackQuery):
         if user_id not in mood_journal:
             mood_journal[user_id] = []
         mood_journal[user_id].append(f"{datetime.now().strftime('%d.%m.%Y %H:%M')} — {v}/10")
-        
-        # Закрываем тему оценки
         if user_id in dialogue_history:
             dialogue_history[user_id].append({"role": "system", "content": f"Пациент оценил состояние: {v}/10. Тема закрыта."})
-        
         if v <= 5:
             care_mode[user_id] = True
             await callback.message.answer(f"Спасибо ({v}/10). Я рядом. 💚")
@@ -441,11 +435,8 @@ async def handle_callback(callback: types.CallbackQuery):
     elif callback.data.startswith("craving_"):
         levels = {"low": "Слабая", "medium": "Средняя", "high": "Сильная", "extreme": "Невыносимая"}
         level_text = levels.get(callback.data.replace("craving_", ""), "")
-        
-        # Закрываем тему тяги
         if user_id in dialogue_history:
             dialogue_history[user_id].append({"role": "system", "content": f"Пациент оценил тягу: {level_text}. Тема закрыта. Не спрашивай про тягу снова."})
-        
         save_data()
         await callback.message.answer(f"Тяга: {level_text}. Опиши, где в теле ты её чувствуешь? 🌊")
         await callback.answer()
@@ -469,7 +460,7 @@ async def handle_message(message: types.Message):
         await message.answer("Я слышу тебя. Оцени тягу:", reply_markup=craving_keyboard())
         return
     if text in ["📊 Оценить", "📊 Оценка"]:
-        await message.answer("Оцени:", reply_markup=mood_keyboard())
+        await message.answer("Оцени состояние от 1 до 10:", reply_markup=mood_keyboard())
         return
     if text == "💪 Я справился":
         await message.answer("Горжусь! 💪🌱")
@@ -504,13 +495,11 @@ async def handle_message(message: types.Message):
     try:
         anna_reply = ask_anna(user_id, text)
         clean = anna_reply.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
-        mood_triggers = ["шкале", "оцени", "от 1 до 10", "настроение", "состояние"]
-        craving_triggers = ["тяга", "тягу"]
-        show_mood = "[MOOD]" in anna_reply or any(w in clean.lower() for w in mood_triggers)
-        show_craving = "[CRAVING]" in anna_reply or any(w in clean.lower() for w in craving_triggers)
-        if show_craving:
+        
+        # Кнопки ТОЛЬКО по явным тегам от Анны
+        if "[CRAVING]" in anna_reply:
             await message.answer(clean, reply_markup=craving_keyboard())
-        elif show_mood:
+        elif "[MOOD]" in anna_reply:
             await message.answer(clean, reply_markup=mood_keyboard())
         else:
             await message.answer(clean)
@@ -526,13 +515,13 @@ async def send_reminders():
         if ct == "09:00":
             for uid in dialogue_history.keys():
                 try:
-                    await bot.send_message(uid, "🌅 Доброе утро! Оцени:", reply_markup=mood_keyboard())
+                    await bot.send_message(uid, "🌅 Доброе утро! Оцени состояние от 1 до 10:", reply_markup=mood_keyboard())
                 except:
                     pass
         if ct == "21:00":
             for uid in dialogue_history.keys():
                 try:
-                    await bot.send_message(uid, "🌙 Как день? Оцени:", reply_markup=mood_keyboard())
+                    await bot.send_message(uid, "🌙 Как день? Оцени от 1 до 10:", reply_markup=mood_keyboard())
                 except:
                     pass
         await asyncio.sleep(30)
