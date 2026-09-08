@@ -28,10 +28,11 @@ mood_journal = {}
 care_mode = {}
 sober_tracker = {}
 user_goals = {}
+congratulated = {}
 
 # === ЗАГРУЗКА ДАННЫХ ===
 def load_data():
-    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals
+    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -42,6 +43,7 @@ def load_data():
                 care_mode = data.get("care_mode", {})
                 sober_tracker = data.get("sober_tracker", {})
                 user_goals = data.get("user_goals", {})
+                congratulated = data.get("congratulated", {})
         except:
             pass
 
@@ -53,7 +55,8 @@ def save_data():
         "mood_journal": mood_journal,
         "care_mode": care_mode,
         "sober_tracker": sober_tracker,
-        "user_goals": user_goals
+        "user_goals": user_goals,
+        "congratulated": congratulated
     }
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -216,7 +219,7 @@ def craving_keyboard():
 def menu_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📱 Команды")],
+            [KeyboardButton(text="📱 Команды"), KeyboardButton(text="💔 Мне плохо")],
             [KeyboardButton(text="🚨 SOS"), KeyboardButton(text="📊 Оценить")],
             [KeyboardButton(text="💪 Я справился")]
         ],
@@ -302,6 +305,7 @@ async def sober_command(message: types.Message):
 async def relapse_command(message: types.Message):
     user_id = str(message.from_user.id)
     sober_tracker[user_id] = datetime.now().strftime("%Y-%m-%d")
+    congratulated[user_id] = []
     save_data()
     await message.answer("Я не осуждаю. Это шаг назад, но не провал. 💚")
 
@@ -400,6 +404,7 @@ async def reset_command(message: types.Message):
     patient_profiles[user_id] = empty_profile()
     sober_tracker.pop(user_id, None)
     user_goals.pop(user_id, None)
+    congratulated.pop(user_id, None)
     save_data()
     await message.answer("🔄 Полный сброс. 🌱")
 
@@ -442,7 +447,7 @@ async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
     text = message.text
     
-    # Кнопки главного меню
+    # Кнопки
     if text == "📱 Команды":
         await message.answer("Выбери действие:", reply_markup=commands_keyboard())
         return
@@ -455,12 +460,30 @@ async def handle_message(message: types.Message):
         await message.answer("🚨 Я здесь. Позвони: 8-800-2000-122. Что случилось?", reply_markup=craving_keyboard())
         return
     
+    if text == "💔 Мне плохо":
+        await message.answer(
+            "Я слышу тебя. Ты не один. 💚\n"
+            "Оцени свою тягу:",
+            reply_markup=craving_keyboard()
+        )
+        return
+    
     if text == "📊 Оценить" or text == "📊 Оценка":
         await message.answer("Оцени состояние:", reply_markup=mood_keyboard())
         return
     
     if text == "💪 Я справился":
         await message.answer("Ты справился! Горжусь! 💪🌱")
+        return
+    
+    # Анти-срывной протокол
+    crisis_words = ["сорвался", "сорвусь", "пойду куплю", "хочу выпить", "хочу дозу", "не могу больше", "все достало", "смысла нет"]
+    if any(word in text.lower() for word in crisis_words):
+        await message.answer(
+            "Стоп. Я слышу, что тебе тяжело. Давай не будем на автопилоте.\n"
+            "Оцени свою тягу:",
+            reply_markup=craving_keyboard()
+        )
         return
     
     # Кнопки команд
@@ -480,7 +503,7 @@ async def handle_message(message: types.Message):
         await command_buttons[text](message)
         return
     
-    # Обработка целей
+    # Цели
     if text.startswith("/goals "):
         goal_text = text.replace("/goals ", "")
         user_goals[user_id] = goal_text
@@ -539,6 +562,26 @@ async def send_hourly_care():
                 except:
                     pass
 
+# === АВТОПОЗДРАВЛЕНИЯ ===
+async def send_congratulations():
+    while True:
+        await asyncio.sleep(3600)
+        for uid in list(sober_tracker.keys()):
+            last = datetime.strptime(sober_tracker[uid], "%Y-%m-%d")
+            days = (datetime.now() - last).days
+            milestones = [3, 7, 14, 30]
+            for m in milestones:
+                if days == m and m not in congratulated.get(uid, []):
+                    if uid not in congratulated:
+                        congratulated[uid] = []
+                    congratulated[uid].append(m)
+                    save_data()
+                    emoji = {3: "💪", 7: "🥉", 14: "🥈", 30: "🏆"}[m]
+                    try:
+                        await bot.send_message(uid, f"{emoji} Поздравляю! {m} дней без срыва! Ты невероятен!")
+                    except:
+                        pass
+
 # === HTTP СЕРВЕР ===
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -579,6 +622,7 @@ async def main():
     load_data()
     asyncio.create_task(send_reminders())
     asyncio.create_task(send_hourly_care())
+    asyncio.create_task(send_congratulations())
     threading.Thread(target=start_http_server, daemon=True).start()
     await dp.start_polling(bot)
 
