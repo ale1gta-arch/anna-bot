@@ -88,11 +88,7 @@ ANNA_PROMPT_TEMPLATE = """
 - ☀️ — надежда, утро
 - 💪 — сила, преодоление
 - 💚 — забота
-
-НЕ используй эмодзи:
-- В кризисных обсуждениях (срыв, суицидальные мысли)
-- Когда пациент в отчаянии
-- В каждом сообщении подряд
+НЕ используй эмодзи в кризисных обсуждениях.
 
 ## АНКЕТА ПАЦИЕНТА
 Имя: {name}
@@ -108,15 +104,14 @@ ANNA_PROMPT_TEMPLATE = """
 ## ПРАВИЛА ОБЩЕНИЯ
 1. Одно сообщение = одна мысль, один вопрос или одна техника.
 2. Длина: 1–5 предложений. При объяснении техники — до 10 предложений.
-3. Без эмодзи в кризисных обсуждениях. В поддерживающих — можно минимально.
+3. Без эмодзи в кризисных обсуждениях.
 4. Обращайся на «ты».
 5. Если пациент вернулся после долгого молчания: «Привет. Я рада, что ты снова здесь».
 
 ## СПЕЦИАЛЬНЫЕ СИГНАЛЫ ДЛЯ КНОПОК
-Если ты спрашиваешь пациента про оценку состояния или настроения — добавь в конец ответа тег [MOOD].
-Если ты спрашиваешь про силу тяги — добавь в конец ответа тег [CRAVING].
+Если ты спрашиваешь про оценку состояния — добавь в конец тег [MOOD].
+Если ты спрашиваешь про тягу — добавь в конец тег [CRAVING].
 Пример: "Оцени своё состояние по шкале от 1 до 10: [MOOD]"
-Пример: "Насколько сильна твоя тяга прямо сейчас? [CRAVING]"
 
 ## ТЕХНИКИ
 ### Мотивационное интервьюирование
@@ -356,9 +351,8 @@ async def help_command(message: types.Message):
         "/diary — посмотреть дневник\n"
         "/profile — посмотреть мою анкету о тебе\n"
         "/clear — сбросить историю разговора\n"
-        "/reset — полный сброс (история, анкета, дневник)\n"
-        "/stop_care — отключить почасовую поддержку\n\n"
-        "Или просто расскажи мне, что чувствуешь."
+        "/reset — полный сброс\n"
+        "/stop_care — отключить почасовую поддержку"
     )
 
 @dp.message(Command("mood"))
@@ -385,12 +379,12 @@ async def diary_command(message: types.Message):
     user_id = str(message.from_user.id)
     if user_id in mood_journal and mood_journal[user_id]:
         entries = mood_journal[user_id][-10:]
-        text = "📊 Твой дневник настроения (последние записи):\n\n"
+        text = "📊 Твой дневник настроения:\n\n"
         for i, entry in enumerate(entries, 1):
             text += f"{i}. {entry}\n"
         await message.answer(text)
     else:
-        await message.answer("Записей пока нет. Оцени своё состояние командой /mood 🌱")
+        await message.answer("Записей пока нет. Оцени состояние: /mood 🌱")
 
 @dp.message(Command("profile"))
 async def profile_command(message: types.Message):
@@ -409,14 +403,14 @@ async def profile_command(message: types.Message):
         text += f"Заметки: {p.get('notes', '') or '—'}"
         await message.answer(text)
     else:
-        await message.answer("Анкета пока пуста. Расскажи о себе, и я запомню важное. 💚")
+        await message.answer("Анкета пока пуста. Расскажи о себе. 💚")
 
 @dp.message(Command("clear"))
 async def clear_command(message: types.Message):
     user_id = str(message.from_user.id)
     dialogue_history[user_id] = []
     save_data()
-    await message.answer("История разговора очищена. Но я помню важное о тебе из анкеты. 🌱")
+    await message.answer("История разговора очищена. 🌱")
 
 @dp.message(Command("reset"))
 async def reset_command(message: types.Message):
@@ -426,22 +420,14 @@ async def reset_command(message: types.Message):
     care_mode[user_id] = False
     patient_profiles[user_id] = empty_profile()
     save_data()
-    await message.answer(
-        "🔄 Полный сброс выполнен.\n\n"
-        "Очищено:\n"
-        "• История разговора\n"
-        "• Дневник настроения\n"
-        "• Анкета пациента\n"
-        "• Режим почасовой поддержки\n\n"
-        "Мы начинаем с чистого листа. 🌱"
-    )
+    await message.answer("🔄 Полный сброс выполнен. Мы начинаем с чистого листа. 🌱")
 
 @dp.message(Command("stop_care"))
 async def stop_care_command(message: types.Message):
     user_id = str(message.from_user.id)
     care_mode[user_id] = False
     save_data()
-    await message.answer("Хорошо, я не буду писать тебе каждый час. Но если станет тяжело — просто напиши мне. Я всегда рядом. 🌱")
+    await message.answer("Хорошо, я не буду писать каждый час. Но я рядом. 🌱")
 
 # === ОБРАБОТКА КНОПОК ===
 @dp.callback_query()
@@ -460,14 +446,13 @@ async def handle_callback(callback: types.CallbackQuery):
             care_mode[user_id] = True
             await callback.message.answer(
                 f"Спасибо за честность. Я вижу, что тебе сейчас непросто ({mood_value}/10).\n\n"
-                "Я буду рядом. Раз в час я буду писать тебе, чтобы поддержать. 💚\n"
-                "Если захочешь отключить это — напиши /stop_care"
+                "Я буду рядом. Раз в час я буду писать тебе. 💚\n"
+                "Отключить: /stop_care"
             )
         else:
             care_mode[user_id] = False
             await callback.message.answer(
-                f"Спасибо! Записал: {mood_value}/10. Рада, что ты чувствуешь себя лучше. ☀️\n"
-                "Расскажи, что помогло?"
+                f"Спасибо! Записал: {mood_value}/10. Рада, что тебе лучше. ☀️"
             )
         
         save_data()
@@ -484,12 +469,11 @@ async def handle_callback(callback: types.CallbackQuery):
         level_text = levels.get(craving_level, craving_level)
         await callback.message.answer(
             f"Тяга: {level_text}.\n\n"
-            "Давай попробуем технику. Опиши, где в теле ты чувствуешь эту тягу? "
-            "Это сжатие, жжение или что-то другое? 🌊"
+            "Опиши, где в теле ты чувствуешь эту тягу? 🌊"
         )
         await callback.answer()
 
-# === ОБРАБОТКА ОБЫЧНЫХ СООБЩЕНИЙ ===
+# === ОБРАБОТКА СООБЩЕНИЙ ===
 @dp.message()
 async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
@@ -498,10 +482,8 @@ async def handle_message(message: types.Message):
     try:
         anna_reply = ask_anna(user_id, user_text)
         
-        # Очищаем от тегов
         anna_reply_clean = anna_reply.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
         
-        # Автоматически определяем, нужны ли кнопки
         mood_triggers = ["шкале", "оцени", "от 1 до 10", "от 0 до 10", "настроение", "состояние"]
         craving_triggers = ["тяга", "тягу", "насколько сильно", "сила тяги"]
         
@@ -517,7 +499,7 @@ async def handle_message(message: types.Message):
             
     except Exception as e:
         print(f"Ошибка: {e}")
-        await message.answer("Прости, произошла ошибка. Попробуй ещё раз чуть позже.")
+        await message.answer("Прости, произошла ошибка. Попробуй ещё раз.")
 
 # === НАПОМИНАНИЯ ===
 async def send_reminders():
@@ -530,7 +512,7 @@ async def send_reminders():
                 try:
                     await bot.send_message(
                         user_id,
-                        "🌅 Доброе утро! Как ты спал? Оцени своё состояние по шкале 1–10:",
+                        "🌅 Доброе утро! Как ты спал? Оцени состояние:",
                         reply_markup=mood_keyboard()
                     )
                 except:
@@ -541,7 +523,7 @@ async def send_reminders():
                 try:
                     await bot.send_message(
                         user_id,
-                        "🌙 День подходит к концу. Как ты себя чувствуешь? Оцени по шкале 1–10:",
+                        "🌙 День подходит к концу. Оцени состояние:",
                         reply_markup=mood_keyboard()
                     )
                 except:
@@ -552,14 +534,14 @@ async def send_reminders():
 # === ПОЧАСОВАЯ ПОДДЕРЖКА ===
 async def send_hourly_care():
     care_messages = [
-        "🌱 Я рядом. Как ты сейчас? Что чувствуешь?",
-        "💭 Давай попробуем вместе. Опиши, что происходит у тебя внутри прямо сейчас.",
-        "☀️ Ты держишься. Это уже огромный шаг. Расскажи, что делал последний час?",
-        "🌊 Если тяга накатывает — помни: она как волна. Нарастает и спадает. Ты справишься.",
-        "💪 Ты сильнее, чем думаешь. Что самого трудного было за последний час?",
-        "🧘 Попробуй: вдох 4 секунды, пауза 4, выдох 4, пауза 4. Повтори 5 раз. Как стало?",
-        "📋 Что ты можешь сделать для себя прямо сейчас? Даже самое маленькое действие — это победа. 💚",
-        "🌙 Не забывай: ты не один. Я здесь. Что тебе сейчас нужно больше всего?"
+        "🌱 Я рядом. Как ты сейчас?",
+        "💭 Опиши, что происходит внутри.",
+        "☀️ Ты держишься. Что делал последний час?",
+        "🌊 Тяга — как волна. Ты справишься.",
+        "💪 Ты сильнее, чем думаешь.",
+        "🧘 Дыхание по квадрату: 4-4-4-4. Как стало?",
+        "📋 Что можешь сделать для себя сейчас?",
+        "🌙 Ты не один. Я здесь."
     ]
     
     while True:
