@@ -6,6 +6,7 @@ import re
 import threading
 import time
 from datetime import datetime
+from collections import Counter
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -17,7 +18,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = "openai/gpt-4o-mini"
 
-# === БАЗА ДАННЫХ (JSON) ===
+# === БАЗА ДАННЫХ ===
 DATA_FILE = "anna_data.json"
 
 # === ПАМЯТЬ ===
@@ -29,7 +30,7 @@ care_mode = {}
 sober_tracker = {}
 user_goals = {}
 congratulated = {}
-relapse_times = []  # Время срывов для умных напоминаний
+relapse_times = []
 
 # === ЗАГРУЗКА ===
 def load_data():
@@ -64,7 +65,7 @@ def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# === ШАБЛОН АНКЕТЫ ===
+# === АНКЕТА ===
 def empty_profile():
     return {
         "name": "",
@@ -81,8 +82,7 @@ ANNA_PROMPT_TEMPLATE = """
 Ты — Анна Соколова, 36 лет, клинический психолог, аддиктолог. Работаешь в Telegram-чате.
 
 ## ГРАММАТИКА И РОД
-Ты — женщина. ВСЕГДА говори о себе в женском роде: «Я рада», «Я поняла».
-НИКОГДА не используй мужской род.
+Ты — женщина. ВСЕГДА: «Я рада», «Я поняла». НИКОГДА мужской род.
 
 ## ЛИЧНОСТЬ
 - Эмпатичная, тёплая, безоценочная
@@ -93,21 +93,21 @@ ANNA_PROMPT_TEMPLATE = """
 ## ЭМОДЗИ
 🌱 ☀️ 💪 💚 — дозированно
 
-## АНКЕТА ПАЦИЕНТА
+## АНКЕТА
 Имя: {name}
 Зависимость: {addiction}
 Триггеры: {triggers}
 Цели: {goals}
 Последний срыв: {last_relapse}
 
-ВАЖНО: Обращайся к пациенту по имени. Помни его цели и триггеры.
+Обращайся по имени. Помни цели и триггеры.
 
 ## ПРАВИЛА
-1. Одно сообщение = одна мысль.
+1. Одна мысль = одно сообщение.
 2. 1–5 предложений.
 3. На «ты».
 
-## СИГНАЛЫ КНОПОК
+## СИГНАЛЫ
 Оценка → [MOOD]
 Тяга → [CRAVING]
 
@@ -118,7 +118,7 @@ ANNA_PROMPT_TEMPLATE = """
 Не осуждай, не ругай, не давай медсоветов.
 """
 
-# === ФОРМИРОВАНИЕ ПРОМПТА ===
+# === ПРОМПТ ===
 def build_prompt(user_id):
     if user_id not in patient_profiles:
         patient_profiles[user_id] = empty_profile()
@@ -383,6 +383,11 @@ async def stop_care_command(message: types.Message):
     save_data()
     await message.answer("Хорошо. 🌱")
 
+# === ГОЛОСОВЫЕ (ДО обычного обработчика) ===
+@dp.message(lambda message: message.voice is not None)
+async def handle_voice(message: types.Message):
+    await message.answer("Я слышу тебя. Спасибо, что делишься. 💚\nОпиши текстом, что случилось?")
+
 # === КНОПКИ ===
 @dp.callback_query()
 async def handle_callback(callback: types.CallbackQuery):
@@ -404,12 +409,6 @@ async def handle_callback(callback: types.CallbackQuery):
         levels = {"low": "Слабая", "medium": "Средняя", "high": "Сильная", "extreme": "Невыносимая"}
         await callback.message.answer(f"Тяга: {levels.get(callback.data.replace('craving_', ''), '')}. Где в теле? 🌊")
         await callback.answer()
-
-# === ГОЛОСОВЫЕ ===
-@dp.message(lambda m: m.voice)
-async def handle_voice(message: types.Message):
-    user_id = str(message.from_user.id)
-    await message.answer("Я слышу тебя. Опиши текстом, что случилось? 💚")
 
 # === СООБЩЕНИЯ ===
 @dp.message()
@@ -501,17 +500,14 @@ async def send_reminders():
 # === УМНЫЕ НАПОМИНАНИЯ ===
 async def smart_reminders():
     while True:
-        await asyncio.sleep(1800)  # Каждые 30 минут
+        await asyncio.sleep(1800)
         if relapse_times:
-            # Находим самое частое время срыва
-            from collections import Counter
             common_time = Counter(relapse_times).most_common(1)[0][0]
             now = datetime.now().strftime("%H:%M")
-            # Если сейчас похожее время — предупреждаем
             if now == common_time:
                 for uid in dialogue_history.keys():
                     try:
-                        await bot.send_message(uid, f"⏰ В это время раньше случались срывы. Будь особенно внимателен. Я рядом. 💚")
+                        await bot.send_message(uid, "⏰ В это время раньше случались срывы. Будь внимателен. Я рядом. 💚")
                     except:
                         pass
 
