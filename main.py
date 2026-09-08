@@ -4,6 +4,7 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, types
@@ -570,6 +571,17 @@ def start_http_server():
         port = int(os.environ.get("PORT", 10000))
         server = HTTPServer(("0.0.0.0", port), HealthHandler)
         print(f"HTTP сервер запущен на порту {port}")
+        
+        # Self-ping каждые 5 минут
+        def self_ping():
+            while True:
+                try:
+                    requests.get(f"http://localhost:{port}/", timeout=5)
+                except:
+                    pass
+                time.sleep(300)
+        
+        threading.Thread(target=self_ping, daemon=True).start()
         server.serve_forever()
     except Exception as e:
         print(f"Ошибка HTTP сервера: {e}")
@@ -580,7 +592,7 @@ async def main():
     asyncio.create_task(send_reminders())
     asyncio.create_task(send_hourly_care())
     
-    # Запускаем HTTP сервер в отдельном потоке
+    # Запускаем HTTP сервер
     threading.Thread(target=start_http_server, daemon=True).start()
     
     # Запускаем бота
