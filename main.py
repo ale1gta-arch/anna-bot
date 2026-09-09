@@ -29,9 +29,10 @@ congratulated = {}
 relapse_times = []
 user_timezones = {}
 patient_memory = {}
+interview_step = {}
 
 def load_data():
-    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones, patient_memory
+    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones, patient_memory, interview_step
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -46,6 +47,7 @@ def load_data():
                 relapse_times = data.get("relapse_times", [])
                 user_timezones = data.get("user_timezones", {})
                 patient_memory = data.get("patient_memory", {})
+                interview_step = data.get("interview_step", {})
         except:
             pass
 
@@ -60,7 +62,8 @@ def save_data():
         "congratulated": congratulated,
         "relapse_times": relapse_times,
         "user_timezones": user_timezones,
-        "patient_memory": patient_memory
+        "patient_memory": patient_memory,
+        "interview_step": interview_step
     }
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -123,7 +126,7 @@ ANNA_PROMPT_TEMPLATE = """
 1. Одна мысль = одно сообщение.
 2. 3–10 предложений. Отвечай развёрнуто, но не перегружай.
 3. На «ты».
-4. НЕ зацикливайся на одной теме.
+4. НЕ зацикливайся.
 
 ## СИГНАЛЫ
 [MOOD] — только когда спрашиваешь оценку от 1 до 10
@@ -287,10 +290,13 @@ async def start_command(message: types.Message):
     dialogue_history[user_id] = []
     if user_id not in patient_memory:
         patient_memory[user_id] = empty_memory()
+    if user_id not in patient_profiles:
+        patient_profiles[user_id] = empty_profile()
+    
+    interview_step[user_id] = "name"
     await message.answer(
         "Привет. Я Анна. Я рядом. 🌱\n\n"
-        "Сколько у тебя сейчас времени?\n"
-        "Напиши в формате ЧЧ:ММ, например: 14:30"
+        "Давай познакомимся. Как тебя зовут?"
     )
 
 @dp.message(Command("time"))
@@ -415,6 +421,7 @@ async def reset_command(message: types.Message):
     user_goals.pop(user_id, None)
     congratulated.pop(user_id, None)
     user_timezones.pop(user_id, None)
+    interview_step.pop(user_id, None)
     save_data()
     await message.answer("🔄 Сброс. 🌱")
 
@@ -437,12 +444,28 @@ async def handle_callback(callback: types.CallbackQuery):
             mood_journal[user_id] = []
         mood_journal[user_id].append(f"{datetime.now().strftime('%d.%m.%Y %H:%M')} — {v}/10")
         update_memory(user_id, "progress_notes", f"Оценка {v}/10")
-        if v <= 5:
-            care_mode[user_id] = True
-            await callback.message.answer(f"Спасибо ({v}/10). Я рядом. 💚")
+        
+        # Если идёт интервью и это шаг level
+        if interview_step.get(user_id) == "level":
+            interview_step[user_id] = "done"
+            patient_profiles[user_id]["stage"] = f"Уровень: {v}/10"
+            save_data()
+            await callback.message.answer(
+                f"Спасибо. Теперь я понимаю твою ситуацию лучше. 💚\n\n"
+                "Вот что я предлагаю:\n"
+                "1. Регулярно оценивай своё состояние (кнопка «📊 Оценить»)\n"
+                "2. Используй план при тяге (кнопка «📋 План»)\n"
+                "3. Отмечай дни без срыва (кнопка «💚 Трезвость»)\n\n"
+                "С чего хочешь начать?",
+                reply_markup=menu_keyboard()
+            )
         else:
-            care_mode[user_id] = False
-            await callback.message.answer(f"Отлично! {v}/10. ☀️")
+            if v <= 5:
+                care_mode[user_id] = True
+                await callback.message.answer(f"Спасибо ({v}/10). Я рядом. 💚")
+            else:
+                care_mode[user_id] = False
+                await callback.message.answer(f"Отлично! {v}/10. ☀️")
         save_data()
         await callback.answer()
     elif callback.data.startswith("craving_"):
@@ -459,7 +482,24 @@ async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
     text = message.text
     
-    # Проверяем, не отвечает ли пациент на вопрос о времени
+    # Интервью
+    step = interview_step.get(user_id)
+    
+    if step == "name":
+        patient_profiles[user_id]["name"] = text
+        save_data()
+        interview_step[user_id] = "problem"
+        await message.answer(f"Приятно познакомиться, {text}! 🌱\n\nС чем ты хочешь работать? Например: зависимость, тревога, депрессия, стресс...")
+        return
+    
+    if step == "problem":
+        patient_profiles[user_id]["addiction"] = text
+        save_data()
+        interview_step[user_id] = "level"
+        await message.answer("Поняла. Оцени, насколько это тебя беспокоит, от 1 до 10:", reply_markup=mood_keyboard())
+        return
+    
+    # Время
     offset = parse_patient_time(text)
     if offset is not None:
         user_timezones[user_id] = offset
