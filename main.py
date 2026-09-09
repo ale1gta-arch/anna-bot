@@ -5,7 +5,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import Counter
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, types
@@ -29,9 +29,10 @@ congratulated = {}
 relapse_times = []
 user_timezones = {}
 patient_memory = {}
+asked_timezone = {}
 
 def load_data():
-    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones, patient_memory
+    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones, patient_memory, asked_timezone
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -46,6 +47,7 @@ def load_data():
                 relapse_times = data.get("relapse_times", [])
                 user_timezones = data.get("user_timezones", {})
                 patient_memory = data.get("patient_memory", {})
+                asked_timezone = data.get("asked_timezone", {})
         except:
             pass
 
@@ -60,7 +62,8 @@ def save_data():
         "congratulated": congratulated,
         "relapse_times": relapse_times,
         "user_timezones": user_timezones,
-        "patient_memory": patient_memory
+        "patient_memory": patient_memory,
+        "asked_timezone": asked_timezone
     }
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -259,7 +262,38 @@ def commands_keyboard():
 MOTIVATIONS = ["Ты сильнее, чем думаешь. 💪", "Каждый день — победа. 🌱", "Ты не один. 💚", "Маленькие шаги — большие перемены. ☀️", "Срыв — не провал. 🌊", "Ты достоин счастья. 💚", "Выбери себя. 🌱", "Твоя сила растёт. 💪"]
 
 def get_patient_time(user_id):
-    return datetime.now() + timedelta(hours=user_timezones.get(user_id, 0))
+    offset = user_timezones.get(user_id, 0)
+    return datetime.now(timezone.utc) + timedelta(hours=offset)
+
+def parse_timezone(text):
+    text = text.lower().strip()
+    text = text.replace("+", "").replace(" ", "")
+    if "москв" in text:
+        return 3
+    if "лондон" in text:
+        return 0
+    if "нью" in text:
+        return -5
+    if "токио" in text:
+        return 9
+    if "париж" in text:
+        return 1
+    if "берлин" in text:
+        return 1
+    if "киев" in text:
+        return 3
+    if "минск" in text:
+        return 3
+    if "екатеринбург" in text:
+        return 5
+    if "новосибирск" in text:
+        return 7
+    if "владивосток" in text:
+        return 10
+    try:
+        return int(text)
+    except:
+        return None
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
@@ -270,21 +304,24 @@ async def start_command(message: types.Message):
     dialogue_history[user_id] = []
     if user_id not in patient_memory:
         patient_memory[user_id] = empty_memory()
-    await message.answer("Привет. Я Анна. Я рядом. 🌱\n\nВ каком ты часовом поясе? Напиши: +3 (Москва), +0 (Лондон), -5 (Нью-Йорк)")
+    await message.answer(
+        "Привет. Я Анна. Я рядом. 🌱\n\n"
+        "В каком ты городе или часовом поясе?\n"
+        "Напиши, например: Москва, Лондон, Нью-Йорк, Токио\n"
+        "Или просто число: +3, +0, -5"
+    )
 
 @dp.message(Command("time"))
 async def time_command(message: types.Message):
     user_id = str(message.from_user.id)
-    try:
-        offset = int(message.text.replace("/time", "").strip().replace("+", ""))
-        if -12 <= offset <= 14:
-            user_timezones[user_id] = offset
-            save_data()
-            await message.answer(f"✅ UTC {offset:+d}")
-        else:
-            await message.answer("От -12 до +14")
-    except:
-        await message.answer("Напиши: /time +3")
+    text = message.text.replace("/time", "").strip()
+    offset = parse_timezone(text)
+    if offset is not None and -12 <= offset <= 14:
+        user_timezones[user_id] = offset
+        save_data()
+        await message.answer(f"✅ Часовой пояс: UTC {offset:+d}")
+    else:
+        await message.answer("Напиши: /time +3 или /time Москва")
 
 @dp.message(Command("menu"))
 async def menu_command(message: types.Message):
@@ -292,7 +329,7 @@ async def menu_command(message: types.Message):
 
 @dp.message(Command("help"))
 async def help_command(message: types.Message):
-    await message.answer("🌱 Команды:\n/menu /mood /sober /relapse /plan /diary /profile /day /goals /breath /motivation /achievements /memory /time +3")
+    await message.answer("🌱 Команды:\n/menu /mood /sober /relapse /plan /diary /profile /day /goals /breath /motivation /achievements /memory /time")
 
 @dp.message(Command("memory"))
 async def memory_command(message: types.Message):
@@ -440,14 +477,12 @@ async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
     text = message.text
     
-    if re.match(r'^[+-]?\d{1,2}$', text):
-        offset = int(text.replace("+", ""))
-        if -12 <= offset <= 14:
-            user_timezones[user_id] = offset
-            save_data()
-            await message.answer(f"✅ UTC {offset:+d}", reply_markup=menu_keyboard())
-        else:
-            await message.answer("От -12 до +14")
+    # Проверяем, не отвечает ли пациент на вопрос о часовом поясе
+    offset = parse_timezone(text)
+    if offset is not None and -12 <= offset <= 14:
+        user_timezones[user_id] = offset
+        save_data()
+        await message.answer(f"✅ Часовой пояс: UTC {offset:+d}", reply_markup=menu_keyboard())
         return
     
     if text == "📱 Команды":
