@@ -292,12 +292,8 @@ async def start_command(message: types.Message):
         patient_memory[user_id] = empty_memory()
     if user_id not in patient_profiles:
         patient_profiles[user_id] = empty_profile()
-    
     interview_step[user_id] = "name"
-    await message.answer(
-        "Привет. Я Анна. Я рядом. 🌱\n\n"
-        "Давай познакомимся. Как тебя зовут?"
-    )
+    await message.answer("Привет. Я Анна. Я рядом. 🌱\n\nДавай познакомимся. Как тебя зовут?")
 
 @dp.message(Command("time"))
 async def time_command(message: types.Message):
@@ -445,19 +441,14 @@ async def handle_callback(callback: types.CallbackQuery):
         mood_journal[user_id].append(f"{datetime.now().strftime('%d.%m.%Y %H:%M')} — {v}/10")
         update_memory(user_id, "progress_notes", f"Оценка {v}/10")
         
-        # Если идёт интервью и это шаг level
         if interview_step.get(user_id) == "level":
-            interview_step[user_id] = "done"
+            interview_step[user_id] = "time"
             patient_profiles[user_id]["stage"] = f"Уровень: {v}/10"
             save_data()
             await callback.message.answer(
                 f"Спасибо. Теперь я понимаю твою ситуацию лучше. 💚\n\n"
-                "Вот что я предлагаю:\n"
-                "1. Регулярно оценивай своё состояние (кнопка «📊 Оценить»)\n"
-                "2. Используй план при тяге (кнопка «📋 План»)\n"
-                "3. Отмечай дни без срыва (кнопка «💚 Трезвость»)\n\n"
-                "С чего хочешь начать?",
-                reply_markup=menu_keyboard()
+                "И последнее: сколько у тебя сейчас времени?\n"
+                "Напиши в формате ЧЧ:ММ, например: 14:30"
             )
         else:
             if v <= 5:
@@ -482,7 +473,6 @@ async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
     text = message.text
     
-    # Интервью
     step = interview_step.get(user_id)
     
     if step == "name":
@@ -499,12 +489,23 @@ async def handle_message(message: types.Message):
         await message.answer("Поняла. Оцени, насколько это тебя беспокоит, от 1 до 10:", reply_markup=mood_keyboard())
         return
     
-    # Время
     offset = parse_patient_time(text)
     if offset is not None:
         user_timezones[user_id] = offset
         save_data()
-        await message.answer("✅ Запомнила! Теперь напоминания будут в твоё время. 💚", reply_markup=menu_keyboard())
+        if interview_step.get(user_id) == "time":
+            interview_step[user_id] = "done"
+            await message.answer(
+                "✅ Запомнила! Теперь напоминания будут в твоё время. 💚\n\n"
+                "Вот что я предлагаю для начала:\n"
+                "1. Оценивай состояние (кнопка «📊 Оценить»)\n"
+                "2. План при тяге (кнопка «📋 План»)\n"
+                "3. Отмечай дни без срыва (кнопка «💚 Трезвость»)\n\n"
+                "С чего хочешь начать?",
+                reply_markup=menu_keyboard()
+            )
+        else:
+            await message.answer("✅ Запомнила! Теперь напоминания будут в твоё время. 💚", reply_markup=menu_keyboard())
         return
     
     if text == "📱 Команды":
