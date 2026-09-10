@@ -1,6 +1,5 @@
 import asyncio, random, json, os, re, threading, time
 from datetime import datetime, timedelta, timezone
-from collections import Counter
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -12,7 +11,6 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = "openai/gpt-4o-mini"
 DATA_FILE = "anna_data.json"
 
-# Глобальные переменные
 dialogue_history = {}
 MAX_HISTORY = 50
 patient_profiles = {}
@@ -32,10 +30,7 @@ diary_step = {}
 daily_reminders = {}
 crisis_step = {}
 
-# КРИЗИСНЫЕ СЛОВА
 CRISIS_WORDS = ["не хочу жить", "не хочу больше жить", "хочу умереть", "хочу покончить", "покончить с собой", "суицид", "самоубийств", "убить себя", "нет смысла жить", "всё закончилось", "не могу больше жить", "устал жить", "лучше бы меня не было", "хочу исчезнуть"]
-
-# УДАЛЕНИЕ ДАННЫХ
 DELETE_WORDS = ["удали данные", "удали всё", "сотри всё", "стереть данные", "удали мои данные", "забудь всё", "удали информацию"]
 
 HOTLINES = """📞 Телефоны помощи:
@@ -116,7 +111,7 @@ def save_data():
         json.dump({"dialogue_history": dialogue_history, "patient_profiles": patient_profiles, "mood_journal": mood_journal, "care_mode": care_mode, "sober_tracker": sober_tracker, "user_goals": user_goals, "congratulated": congratulated, "relapse_times": relapse_times, "user_timezones": user_timezones, "patient_memory": patient_memory, "interview_step": interview_step, "last_activity": last_activity, "user_consent": user_consent, "emotion_step": emotion_step, "diary_step": diary_step, "daily_reminders": daily_reminders, "crisis_step": crisis_step}, f, ensure_ascii=False, indent=2)
 
 def empty_profile(): return {"name": "", "gender": "", "addiction": "", "stage": "", "triggers": "", "goals": "", "last_relapse": "", "notes": ""}
-def empty_memory(): return {"first_contact": datetime.now().strftime("%d.%m.%Y"), "sessions": 0, "preferred_techniques": [], "important_events": [], "progress_notes": []}
+def empty_memory(): return {"first_contact": datetime.now().strftime("%d.%m.%Y"), "sessions": 0, "progress_notes": []}
 
 def update_memory(user_id, field, value):
     if user_id not in patient_memory: patient_memory[user_id] = empty_memory()
@@ -141,17 +136,11 @@ ANNA_PROMPT = """Ты — Анна Соколова, виртуальный пс
 - КПТ: Ситуация → Мысль → Эмоция → Поведение.
 - ДБТ: 4 модуля навыков.
 
-## КРИЗИС
-При суицидальных мыслях НЕ спрашивай оценку. Спроси: «Есть ли план? Есть ли доступ к средствам?» Если да — дай 112 и 8-800-2000-122, скажи «Я не могу продолжать терапию».
-
-## УДАЛЕНИЕ ДАННЫХ
-Если просят удалить — скажи: «Введи /reset. После подтверждения всё будет стёрто».
+## ПАНИКА
+Одно короткое действие: «Дыши со мной: вдох 4, задержка 4, выдох 4. Я жду».
 
 ## ОФФТОП
 На анекдоты/игры — мягко возвращай к терапии.
-
-## ПАНИКА
-Одно короткое действие: «Дыши со мной: вдох 4, задержка 4, выдох 4. Я жду».
 
 ## АНКЕТА
 Имя: {name}
@@ -184,12 +173,6 @@ def build_prompt(user_id):
         first_contact=m.get("first_contact", "неизвестно"),
         sessions=m.get("sessions", 0),
         progress="; ".join(m.get("progress_notes", [])) or "пока нет")
-
-def call_ai(system, user_text):
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    data = {"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user_text}], "max_tokens": 800}
-    r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=30)
-    return r.json()["choices"][0]["message"]["content"]
 
 def fix_gender(uid, text):
     if uid not in patient_profiles: return text
@@ -276,6 +259,8 @@ async def start_cmd(m: types.Message):
     dialogue_history[uid] = []
     if uid not in patient_memory: patient_memory[uid] = empty_memory()
     if uid not in patient_profiles: patient_profiles[uid] = empty_profile()
+    crisis_step.pop(uid, None)
+    save_data()
     await m.answer("Я — виртуальный помощник Анна, а не врач. Не ставлю диагнозы, не назначаю лечение.\n\nДанные конфиденциальны. Для удаления: /reset.\n\nНажмите «Согласен(а)».", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Согласен(а)", callback_data="consent_yes")], [InlineKeyboardButton(text="Не согласен(а)", callback_data="consent_no")]]))
 
 @dp.callback_query()
@@ -293,7 +278,9 @@ async def consent_cb(c: types.CallbackQuery):
         await callback_handler(c)
 
 @dp.message(Command("menu"))
-async def menu_cmd(m: types.Message): await m.answer("Меню:", reply_markup=main_menu_kb())
+async def menu_cmd(m: types.Message):
+    crisis_step.pop(str(m.from_user.id), None); save_data()
+    await m.answer("Меню:", reply_markup=main_menu_kb())
 
 @dp.message(Command("crisis"))
 async def crisis_cmd(m: types.Message): await m.answer("Кризисное меню:", reply_markup=crisis_kb())
@@ -307,6 +294,7 @@ async def help_cmd(m: types.Message): await m.answer("ℹ️ Контакты:\n
 @dp.message(Command("reset"))
 async def reset_cmd(m: types.Message):
     uid = str(m.from_user.id)
+    crisis_step.pop(uid, None); save_data()
     await m.answer("Удалить все данные? Напишите «Да, удалить» или «Удалить».")
     interview_step[uid] = "confirm_reset"
 
@@ -321,6 +309,15 @@ async def handle(m: types.Message):
     uid = str(m.from_user.id)
     text = m.text
 
+    # Команды всегда работают, даже в кризисе
+    if text == "/start": await start_cmd(m); return
+    if text == "/menu": await menu_cmd(m); return
+    if text == "/crisis": await crisis_cmd(m); return
+    if text == "/mood": await mood_cmd(m); return
+    if text == "/help": await help_cmd(m); return
+    if text == "/reset": await reset_cmd(m); return
+    if text == "/education": await edu_cmd(m); return
+
     # Согласие
     if uid not in user_consent or not user_consent[uid]:
         if text == "Согласен(а)":
@@ -332,15 +329,15 @@ async def handle(m: types.Message):
         else:
             await m.answer("Дай согласие или /start."); return
 
-    # КРИЗИС
-    if is_crisis(text):
+    # КРИЗИС: срабатывает только на новые кризисные сообщения, если не в high
+    if is_crisis(text) and crisis_step.get(uid) != "high":
         crisis_step[uid] = "asked_plan"; save_data()
-        await m.answer(f"Алексей, я слышу тебя. Это очень серьёзно.\n\nОтветь честно:\n1. Есть ли конкретный план?\n2. Есть ли доступ к средствам?\n\nОт этого зависит моя помощь.")
+        await m.answer("Алексей, я слышу тебя. Это очень серьёзно.\n\nОтветь честно:\n1. Есть ли конкретный план?\n2. Есть ли доступ к средствам?\n\nОт этого зависит моя помощь.")
         return
 
     if crisis_step.get(uid) == "asked_plan":
         t = text.lower()
-        if any(w in t for w in ["да", "есть", "yes", "знаю"]):
+        if any(w in t for w in ["да", "есть", "yes", "знаю", "планирую"]):
             crisis_step[uid] = "high"
             save_data()
             await m.answer("Это критично. Я не могу продолжать терапию, пока ты в опасности.\n\n🚨 Позвони прямо сейчас:\n📞 112\n📞 8-800-2000-122\n\nПопроси близкого быть рядом. Сделай это сейчас.")
@@ -350,26 +347,32 @@ async def handle(m: types.Message):
             await m.answer("Спасибо за честность. Позвони на бесплатную линию: 8-800-2000-122 (круглосуточно).\n\nРасскажи, что привело к таким мыслям?")
         return
 
+    # HIGH: разрешаем выход по кнопкам, ключевым словам и другим темам
     if crisis_step.get(uid) == "high":
-        await m.answer("Алексей, я всё ещё здесь. Позвони 112 или 8-800-2000-122 прямо сейчас. Это минута, но она может спасти жизнь.\n\nЯ не могу продолжать, пока ты в опасности. Позвони.")
-        return
+        t = text.lower()
+        exit_keywords = ["паника", "паническая", "тяга", "сорвался", "срыв", "тревога", "грустно", "дневник", "состояние", "назад", "меню", "цели", "знания", "дыхание", "помощь", "настройки", "оценить"]
+        exit_buttons = ["📊 Состояние", "📝 Дневник", "🧠 Что я чувствую?", "😰 Паника", "🔥 У меня тяга", "💔 Я сорвался", "🎯 Цели", "📚 Знания", "🧘 Дыхание", "ℹ️ Помощь", "⚙️ Настройки", "⬅️ Назад в меню", "🚨 Мне плохо", "🆘 Я на грани"]
+        if any(w in t for w in exit_keywords) or text in exit_buttons:
+            crisis_step.pop(uid, None)
+            save_data()
+            # продолжаем обработку ниже (не возвращаемся)
+        else:
+            await m.answer("Алексей, я всё ещё здесь. Позвони 112 или 8-800-2000-122 прямо сейчас. Это минута, но она может спасти жизнь.\n\nЯ не могу продолжать, пока ты в опасности. Позвони.")
+            return
 
     # УДАЛЕНИЕ ДАННЫХ
     if is_delete(text):
         await m.answer("Алексей, я уважаю твоё право. Введи /reset — после подтверждения всё будет стёрто (история, анкета, дневник).")
         return
 
-    # Подтверждение сброса
     if interview_step.get(uid) == "confirm_reset":
         t = text.lower().strip()
         if t in ["да, удалить", "да удалить", "удалить", "да", "подтверждаю", "yes"]:
-            for k in list(dialogue_history.keys()):
-                if k == uid: dialogue_history.pop(uid, None)
-            mood_journal.pop(uid, None); care_mode.pop(uid, None); patient_profiles.pop(uid, None)
-            patient_memory.pop(uid, None); sober_tracker.pop(uid, None); user_goals.pop(uid, None)
-            user_timezones.pop(uid, None); interview_step.pop(uid, None); user_consent.pop(uid, None)
-            emotion_step.pop(uid, None); diary_step.pop(uid, None); crisis_step.pop(uid, None)
-            daily_reminders.pop(uid, None); save_data()
+            dialogue_history.pop(uid, None); mood_journal.pop(uid, None); care_mode.pop(uid, None)
+            patient_profiles.pop(uid, None); patient_memory.pop(uid, None); sober_tracker.pop(uid, None)
+            user_goals.pop(uid, None); user_timezones.pop(uid, None); interview_step.pop(uid, None)
+            user_consent.pop(uid, None); emotion_step.pop(uid, None); diary_step.pop(uid, None)
+            crisis_step.pop(uid, None); daily_reminders.pop(uid, None); save_data()
             await m.answer("Все данные удалены. /start для начала."); return
         else:
             interview_step.pop(uid, None)
