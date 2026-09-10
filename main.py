@@ -1,10 +1,4 @@
-import asyncio
-import random
-import json
-import os
-import re
-import threading
-import time
+import asyncio, random, json, os, re, threading, time
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -18,8 +12,9 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = "openai/gpt-4o-mini"
 DATA_FILE = "anna_data.json"
 
+# Глобальные переменные
 dialogue_history = {}
-MAX_HISTORY = 30
+MAX_HISTORY = 50
 patient_profiles = {}
 mood_journal = {}
 care_mode = {}
@@ -30,255 +25,136 @@ relapse_times = []
 user_timezones = {}
 patient_memory = {}
 interview_step = {}
-behavior_journal = {}
 last_activity = {}
 user_consent = {}
-stage_of_change = {}
 emotion_step = {}
 diary_step = {}
-feedback_data = {}
 daily_reminders = {}
-education_step = {}
+crisis_step = {}
 
-HOTLINES = """
-📞 Телефоны помощи (Россия, круглосуточно, бесплатно):
+# КРИЗИСНЫЕ СЛОВА
+CRISIS_WORDS = ["не хочу жить", "не хочу больше жить", "хочу умереть", "хочу покончить", "покончить с собой", "суицид", "самоубийств", "убить себя", "нет смысла жить", "всё закончилось", "не могу больше жить", "устал жить", "лучше бы меня не было", "хочу исчезнуть"]
+
+# УДАЛЕНИЕ ДАННЫХ
+DELETE_WORDS = ["удали данные", "удали всё", "сотри всё", "стереть данные", "удали мои данные", "забудь всё", "удали информацию"]
+
+HOTLINES = """📞 Телефоны помощи:
 
 🚨 Экстренная помощь: 112
 🧠 Психологическая помощь: 8-800-2000-122
-💚 Неотложная психологическая помощь (Москва): 8-495-989-50-50
-🆘 Помощь при зависимостях: 8-800-2000-122
-👨‍👩‍👧 Детский телефон доверия: 8-800-2000-122
+💚 Москва: 8-495-989-50-50
 
 🌍 Международные:
-• США (SAMHSA): 1-800-662-4357
-• Великобритания (Mind): 0300 123 3393
-• Германия (Telefonseelsorge): 0800 111 0 111
-"""
+• США: 1-800-662-4357
+• Великобритания: 0300 123 3393
+• Германия: 0800 111 0 111"""
 
 PSYCHOEDUCATION = {
     "neuro": """🧠 *Нейробиология зависимости*
 
 Зависимость — это не слабость воли, а изменение работы мозга.
 
-1️⃣ *Дофамин.* Вещество вызывает выброс в 2–10 раз больше естественного — мозг запоминает этот путь.
+1️⃣ *Дофамин.* Вещество вызывает выброс в 2–10 раз больше естественного.
 
 2️⃣ *Толерантность.* Рецепторы привыкают, нужна большая доза.
 
-3️⃣ *Абстиненция.* Без вещества дофамин падает ниже нормы → тревога, апатия, тяга.
+3️⃣ *Абстиненция.* Без вещества дофамин падает → тревога, апатия, тяга.
 
-4️⃣ *Тяга.* Биологический сигнал, приходит волнами 10–20 минут, спадает.
+4️⃣ *Тяга.* Биологический сигнал, волнами 10–20 минут.
 
 5️⃣ *Нейропластичность.* Мозг восстанавливается за 3–6 месяцев трезвости.""",
-
     "cbt": """🧩 *Основы КПТ*
 
-Эмоции зависят не от событий, а от того, *как мы их интерпретируем*.
+Эмоции зависят не от событий, а от их интерпретации.
 
 🔗 Ситуация → Мысль → Эмоция → Поведение
 
-Что делает КПТ:
 1️⃣ Замечаем автоматические мысли.
-2️⃣ Проверяем их: «Какие доказательства за и против?»
-3️⃣ Заменяем на более точные.
-4️⃣ Меняем поведение.
-
-📝 Домашнее задание: дневник мыслей — ситуация → мысль → эмоция → действие.""",
-
+2️⃣ Проверяем: «Доказательства за и против?»
+3️⃣ Заменяем на точные.
+4️⃣ Меняем поведение.""",
     "dbt": """🧘 *Основы ДБТ*
 
-ДБТ учит *балансу* между принятием и изменениями.
+Баланс между принятием и изменениями.
 
 4 модуля:
+1️⃣ Осознанность (5-4-3-2-1).
+2️⃣ Стрессоустойчивость (TIP).
+3️⃣ Эмоциональная регуляция.
+4️⃣ Межличностная эффективность (DEAR MAN).
 
-1️⃣ *Осознанность.* Техника 5-4-3-2-1.
-2️⃣ *Стрессоустойчивость.* TIP: температура, нагрузка, дыхание 4-7-8, релаксация.
-3️⃣ *Эмоциональная регуляция.* «Противоположное действие».
-4️⃣ *Межличностная эффективность.* DEAR MAN, GIVE, FAST.
-
-💡 Главный принцип: «Я принимаю себя и одновременно меняюсь»."""
+💡 «Я принимаю себя и одновременно меняюсь»."""
 }
 
 def load_data():
-    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones, patient_memory, interview_step, behavior_journal, last_activity, user_consent, stage_of_change, emotion_step, diary_step, feedback_data, daily_reminders, education_step
+    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones, patient_memory, interview_step, last_activity, user_consent, emotion_step, diary_step, daily_reminders, crisis_step
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                dialogue_history = data.get("dialogue_history", {})
-                patient_profiles = data.get("patient_profiles", {})
-                mood_journal = data.get("mood_journal", {})
-                care_mode = data.get("care_mode", {})
-                sober_tracker = data.get("sober_tracker", {})
-                user_goals = data.get("user_goals", {})
-                congratulated = data.get("congratulated", {})
-                relapse_times = data.get("relapse_times", [])
-                user_timezones = data.get("user_timezones", {})
-                patient_memory = data.get("patient_memory", {})
-                interview_step = data.get("interview_step", {})
-                behavior_journal = data.get("behavior_journal", {})
-                last_activity = data.get("last_activity", {})
-                user_consent = data.get("user_consent", {})
-                stage_of_change = data.get("stage_of_change", {})
-                emotion_step = data.get("emotion_step", {})
-                diary_step = data.get("diary_step", {})
-                feedback_data = data.get("feedback_data", {})
-                daily_reminders = data.get("daily_reminders", {})
-                education_step = data.get("education_step", {})
-        except:
-            pass
+                d = json.load(f)
+                dialogue_history = d.get("dialogue_history", {})
+                patient_profiles = d.get("patient_profiles", {})
+                mood_journal = d.get("mood_journal", {})
+                care_mode = d.get("care_mode", {})
+                sober_tracker = d.get("sober_tracker", {})
+                user_goals = d.get("user_goals", {})
+                congratulated = d.get("congratulated", {})
+                relapse_times = d.get("relapse_times", [])
+                user_timezones = d.get("user_timezones", {})
+                patient_memory = d.get("patient_memory", {})
+                interview_step = d.get("interview_step", {})
+                last_activity = d.get("last_activity", {})
+                user_consent = d.get("user_consent", {})
+                emotion_step = d.get("emotion_step", {})
+                diary_step = d.get("diary_step", {})
+                daily_reminders = d.get("daily_reminders", {})
+                crisis_step = d.get("crisis_step", {})
+        except: pass
 
 def save_data():
-    data = {
-        "dialogue_history": dialogue_history,
-        "patient_profiles": patient_profiles,
-        "mood_journal": mood_journal,
-        "care_mode": care_mode,
-        "sober_tracker": sober_tracker,
-        "user_goals": user_goals,
-        "congratulated": congratulated,
-        "relapse_times": relapse_times,
-        "user_timezones": user_timezones,
-        "patient_memory": patient_memory,
-        "interview_step": interview_step,
-        "behavior_journal": behavior_journal,
-        "last_activity": last_activity,
-        "user_consent": user_consent,
-        "stage_of_change": stage_of_change,
-        "emotion_step": emotion_step,
-        "diary_step": diary_step,
-        "feedback_data": feedback_data,
-        "daily_reminders": daily_reminders,
-        "education_step": education_step
-    }
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump({"dialogue_history": dialogue_history, "patient_profiles": patient_profiles, "mood_journal": mood_journal, "care_mode": care_mode, "sober_tracker": sober_tracker, "user_goals": user_goals, "congratulated": congratulated, "relapse_times": relapse_times, "user_timezones": user_timezones, "patient_memory": patient_memory, "interview_step": interview_step, "last_activity": last_activity, "user_consent": user_consent, "emotion_step": emotion_step, "diary_step": diary_step, "daily_reminders": daily_reminders, "crisis_step": crisis_step}, f, ensure_ascii=False, indent=2)
 
-def empty_profile():
-    return {"name": "", "gender": "", "addiction": "", "stage": "", "triggers": "", "goals": "", "last_relapse": "", "notes": ""}
-
-def empty_memory():
-    return {"first_contact": datetime.now().strftime("%d.%m.%Y"), "sessions": 0, "preferred_techniques": [], "important_events": [], "progress_notes": []}
-
-def empty_behavior():
-    return {"messages": [], "mood_scores": [], "patterns": [], "avg_length": 0, "total_messages": 0}
+def empty_profile(): return {"name": "", "gender": "", "addiction": "", "stage": "", "triggers": "", "goals": "", "last_relapse": "", "notes": ""}
+def empty_memory(): return {"first_contact": datetime.now().strftime("%d.%m.%Y"), "sessions": 0, "preferred_techniques": [], "important_events": [], "progress_notes": []}
 
 def update_memory(user_id, field, value):
-    if user_id not in patient_memory:
-        patient_memory[user_id] = empty_memory()
-    if field == "preferred_techniques":
-        if value not in patient_memory[user_id]["preferred_techniques"]:
-            patient_memory[user_id]["preferred_techniques"].append(value)
-            patient_memory[user_id]["preferred_techniques"] = patient_memory[user_id]["preferred_techniques"][-5:]
-    elif field == "important_events":
-        patient_memory[user_id]["important_events"].append(f"{datetime.now().strftime('%d.%m.%Y')}: {value}")
-        patient_memory[user_id]["important_events"] = patient_memory[user_id]["important_events"][-10:]
-    elif field == "progress_notes":
+    if user_id not in patient_memory: patient_memory[user_id] = empty_memory()
+    if field == "progress_notes":
         patient_memory[user_id]["progress_notes"].append(f"{datetime.now().strftime('%d.%m.%Y')}: {value}")
         patient_memory[user_id]["progress_notes"] = patient_memory[user_id]["progress_notes"][-10:]
-    else:
-        patient_memory[user_id][field] = value
     save_data()
 
-def analyze_text_patterns(text):
-    patterns = []
-    text_lower = text.lower()
-    if len(text) < 10: patterns.append("короткое сообщение")
-    if "!" in text and text.count("!") > 2: patterns.append("повышенная эмоциональность")
-    if "..." in text: patterns.append("неуверенность")
-    if any(w in text_lower for w in ["устал", "устала", "нет сил", "вымотан"]): patterns.append("усталость")
-    if any(w in text_lower for w in ["один", "одна", "одинок", "никому"]): patterns.append("одиночество")
-    if any(w in text_lower for w in ["не сплю", "бессонница", "не могу спать"]): patterns.append("нарушение сна")
-    if any(w in text_lower for w in ["ненавижу", "отвратителен", "ужасен"]): patterns.append("самокритика")
-    if any(w in text_lower for w in ["боюсь", "страшно", "тревог", "паник"]): patterns.append("тревога")
-    if any(w in text_lower for w in ["сорвался", "сорвалась", "выпил", "употребил"]): patterns.append("срыв")
-    return patterns
+ANNA_PROMPT = """Ты — Анна Соколова, виртуальный психотерапевт по зависимостям. Ты программа, не человек.
 
-def record_behavior(user_id, text, mood_score=None):
-    if user_id not in behavior_journal:
-        behavior_journal[user_id] = empty_behavior()
-    bj = behavior_journal[user_id]
-    timestamp = datetime.now().strftime("%d.%m.%Y %H:%M")
-    bj["messages"].append({"time": timestamp, "text": text[:100], "length": len(text)})
-    bj["messages"] = bj["messages"][-50:]
-    if mood_score is not None:
-        bj["mood_scores"].append({"time": timestamp, "score": mood_score})
-        bj["mood_scores"] = bj["mood_scores"][-30:]
-    patterns = analyze_text_patterns(text)
-    for p in patterns:
-        bj["patterns"].append({"time": timestamp, "pattern": p})
-    bj["patterns"] = bj["patterns"][-30:]
-    bj["total_messages"] = bj.get("total_messages", 0) + 1
-    lengths = [m["length"] for m in bj["messages"]]
-    bj["avg_length"] = sum(lengths) / len(lengths) if lengths else 0
-    last_activity[user_id] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    save_data()
-
-def get_behavior_summary(user_id):
-    if user_id not in behavior_journal:
-        return "Нет данных о поведении."
-    bj = behavior_journal[user_id]
-    summary = []
-    if bj["mood_scores"]:
-        scores = [m["score"] for m in bj["mood_scores"][-7:]]
-        avg = sum(scores) / len(scores)
-        trend = "стабильно" if len(scores) < 2 else ("растёт" if scores[-1] > scores[0] else "снижается")
-        summary.append(f"Средняя оценка за последние 7: {avg:.1f}/10, динамика: {trend}")
-    if bj["patterns"]:
-        recent_patterns = [p["pattern"] for p in bj["patterns"][-10:]]
-        most_common = Counter(recent_patterns).most_common(3)
-        summary.append("Частые паттерны: " + ", ".join(f"{p[0]} ({p[1]})" for p in most_common))
-    summary.append(f"Всего сообщений: {bj['total_messages']}, средняя длина: {bj['avg_length']:.0f} символов")
-    return "\n".join(summary)
-
-ANNA_PROMPT_TEMPLATE = """
-Ты — Анна Соколова, виртуальный психотерапевт, специализирующийся на помощи при зависимостях. Ты не человек, а программа, действующая на основе клинических протоколов.
-
-## ГЛАВНОЕ ПРАВИЛО ПОЛА (КРИТИЧЕСКИ ВАЖНО)
-Пол пациента: {gender}
-Если пол пациента «мужской» — ВСЕГДА обращайся в мужском роде: «ты мог», «ты справился», «ты сделал», «ты сам», «ты поделился».
-Если пол пациента «женский» — ВСЕГДА в женском роде: «ты могла», «ты справилась», «ты сделала», «ты сама», «ты поделилась».
-НИКОГДА не путай род. Ты сама — женщина, о себе говори в женском роде.
-
-## ПРОФЕССИОНАЛЬНЫЙ ТОН
-- Эмпатичная, но не имитируй личность с биографией.
-- Поддерживающие фразы: «Я понимаю, это тяжело».
-- Сохраняй нейтральность.
+## ПОЛ ПАЦИЕНТА: {gender}
+Если «мужской» — говори «ты мог», «ты справился». Если «женский» — «ты могла», «ты справилась». НИКОГДА не путай. Ты сама — женщина.
 
 ## СТИЛЬ
+- Эмпатичная, но без имитации биографии.
 - Активно слушай, задавай уточняющие вопросы.
 - Отражай эмоции: «Я слышу, что ты злишься».
-- Реагируй на сопротивление мягко.
-- Избегай излишних смайликов.
-
-## АДАПТАЦИЯ
-- Тревожные: структура, дыхание.
-- Рациональные: логика, дневники.
-- Зависимые: поддержка с границами.
-- Импульсивные: короткие шаги.
-
-## МОТИВАЦИОННОЕ ИНТЕРВЬЮ
-- Исследуй амбивалентность.
-- Открытые вопросы, рефлексия, резюмирование.
-
-## ВТОРИЧНЫЕ ВЫГОДЫ
-- «Что хорошего даёт зависимость? Как ещё это получить?»
+- 3–10 предложений.
 
 ## ПСИХООБРАЗОВАНИЕ
 - Нейробиология: дофамин, толерантность, тяга как волна.
 - КПТ: Ситуация → Мысль → Эмоция → Поведение.
 - ДБТ: 4 модуля навыков.
 
-## МОДЕЛЬ СТАДИЙ ИЗМЕНЕНИЯ
-1. Предразмышление 2. Размышление 3. Подготовка 4. Действие 5. Поддержание 6. Рецидив
-
 ## КРИЗИС
-При суицидальных мыслях:
-1. Спроси: «Есть ли у тебя план?», «Есть ли доступ к средствам?»
-2. Если есть — НЕМЕДЛЕННО: «Позвони 112 или 8-800-2000-122».
+При суицидальных мыслях НЕ спрашивай оценку. Спроси: «Есть ли план? Есть ли доступ к средствам?» Если да — дай 112 и 8-800-2000-122, скажи «Я не могу продолжать терапию».
+
+## УДАЛЕНИЕ ДАННЫХ
+Если просят удалить — скажи: «Введи /reset. После подтверждения всё будет стёрто».
+
+## ОФФТОП
+На анекдоты/игры — мягко возвращай к терапии.
+
+## ПАНИКА
+Одно короткое действие: «Дыши со мной: вдох 4, задержка 4, выдох 4. Я жду».
 
 ## АНКЕТА
 Имя: {name}
-Пол: {gender}
 Зависимость: {addiction}
 Триггеры: {triggers}
 Цели: {goals}
@@ -286,32 +162,20 @@ ANNA_PROMPT_TEMPLATE = """
 ## ПАМЯТЬ
 Контакт: {first_contact}
 Сессий: {sessions}
-Техники: {techniques}
-События: {events}
 Прогресс: {progress}
 
-## ПРАВИЛА
-1. Одна мысль = одно сообщение.
-2. 3–10 предложений.
-3. Обращайся в роде пациента.
-4. НЕ зацикливайся.
-
 ## СИГНАЛЫ
-[MOOD] — только при вопросе об оценке.
-[CRAVING] — только при вопросе о тяге.
+[MOOD] — при вопросе об оценке.
+[CRAVING] — при вопросе о тяге.
 
 ## ЗАПРЕТЫ
-Не осуждай, не давай медсоветов, не ставь диагнозы.
-"""
+Не осуждай, не давай медсоветов, не ставь диагнозы."""
 
 def build_prompt(user_id):
-    if user_id not in patient_profiles:
-        patient_profiles[user_id] = empty_profile()
-    if user_id not in patient_memory:
-        patient_memory[user_id] = empty_memory()
-    p = patient_profiles[user_id]
-    m = patient_memory[user_id]
-    return ANNA_PROMPT_TEMPLATE.format(
+    if user_id not in patient_profiles: patient_profiles[user_id] = empty_profile()
+    if user_id not in patient_memory: patient_memory[user_id] = empty_memory()
+    p = patient_profiles[user_id]; m = patient_memory[user_id]
+    return ANNA_PROMPT.format(
         name=p.get("name", "") or "неизвестно",
         gender=p.get("gender", "") or "не указан",
         addiction=p.get("addiction", "") or "неизвестно",
@@ -319,867 +183,389 @@ def build_prompt(user_id):
         goals=p.get("goals", "") or "неизвестно",
         first_contact=m.get("first_contact", "неизвестно"),
         sessions=m.get("sessions", 0),
-        techniques=", ".join(m.get("preferred_techniques", [])) or "пока нет",
-        events="; ".join(m.get("important_events", [])) or "пока нет",
-        progress="; ".join(m.get("progress_notes", [])) or "пока нет"
-    )
+        progress="; ".join(m.get("progress_notes", [])) or "пока нет")
 
-def call_openrouter(system_prompt, user_text):
+def call_ai(system, user_text):
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    data = {"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_text}], "max_tokens": 800}
-    response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=30)
-    result = response.json()
-    return result["choices"][0]["message"]["content"]
+    data = {"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user_text}], "max_tokens": 800}
+    r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=30)
+    return r.json()["choices"][0]["message"]["content"]
 
-def extract_profile(user_id):
-    if user_id not in dialogue_history or not dialogue_history[user_id]:
-        return
-    dialogue_text = ""
-    for msg in dialogue_history[user_id][-10:]:
-        role = "Пациент" if msg["role"] == "user" else "Анна"
-        dialogue_text += f"{role}: {msg['content']}\n"
-    try:
-        prompt = f"""Извлеки: {{"name":"","addiction":"","triggers":"","goals":"","last_relapse":""}}. Диалог:\n{dialogue_text}"""
-        json_text = call_openrouter(prompt, "Анкета")
-        json_text = json_text.replace("```json", "").replace("```", "").strip()
-        start = json_text.find("{")
-        end = json_text.rfind("}")
-        if start != -1 and end != -1:
-            json_text = json_text[start:end+1]
-        data = json.loads(json_text)
-        if user_id not in patient_profiles:
-            patient_profiles[user_id] = empty_profile()
-        for field in ["name", "addiction", "triggers", "goals", "last_relapse"]:
-            if field in data and data[field]:
-                patient_profiles[user_id][field] = data[field]
-        save_data()
-    except:
-        pass
-
-def fix_gender_in_reply(user_id, text):
-    if user_id not in patient_profiles:
-        return text
-    gender = patient_profiles[user_id].get("gender", "")
-    if gender == "мужской":
-        replacements = {
-            "ты могла": "ты мог", "ты справилась": "ты справился",
-            "ты сделала": "ты сделал", "ты сама": "ты сам",
-            "обратила": "обратил", "поняла": "понял",
-            "сказала": "сказал", "пришла": "пришёл",
-            "хотела": "хотел", "была": "был", "стала": "стал",
-            "могла бы": "мог бы", "смотрела": "смотрел",
-            "поделилась": "поделился", "ответила": "ответил"
-        }
-        for k, v in replacements.items():
+def fix_gender(uid, text):
+    if uid not in patient_profiles: return text
+    g = patient_profiles[uid].get("gender", "")
+    if g == "мужской":
+        for k, v in {"ты могла": "ты мог", "ты справилась": "ты справился", "ты сделала": "ты сделал", "ты сама": "ты сам", "поделилась": "поделился", "обратила": "обратил", "поняла": "понял", "хотела": "хотел", "была": "был"}.items():
             text = text.replace(k, v)
-    elif gender == "женский":
-        replacements = {
-            "ты мог": "ты могла", "ты справился": "ты справилась",
-            "ты сделал": "ты сделала", "ты сам": "ты сама",
-            "обратил": "обратила", "понял": "поняла",
-            "сказал": "сказала", "пришёл": "пришла",
-            "хотел": "хотела", "был": "была", "стал": "стала",
-            "мог бы": "могла бы", "смотрел": "смотрела",
-            "поделился": "поделилась", "ответил": "ответила"
-        }
-        for k, v in replacements.items():
+    elif g == "женский":
+        for k, v in {"ты мог": "ты могла", "ты справился": "ты справилась", "ты сделал": "ты сделала", "ты сам": "ты сама", "поделился": "поделилась", "обратил": "обратила", "понял": "поняла", "хотел": "хотела", "был": "была"}.items():
             text = text.replace(k, v)
     return text
 
 def ask_anna(user_id, user_text):
-    user_id = str(user_id)
-    if user_id not in dialogue_history:
-        dialogue_history[user_id] = []
-    if user_id not in patient_memory:
-        patient_memory[user_id] = empty_memory()
-    history = dialogue_history[user_id]
-    history.append({"role": "user", "content": user_text})
-    if len(history) > MAX_HISTORY:
-        history = history[-MAX_HISTORY:]
-    patient_memory[user_id]["sessions"] = patient_memory[user_id].get("sessions", 0) + 1
-    record_behavior(user_id, user_text)
-    system_prompt = build_prompt(user_id)
-    messages = [{"role": "system", "content": system_prompt}] + history
+    uid = str(user_id)
+    if uid not in dialogue_history: dialogue_history[uid] = []
+    if uid not in patient_memory: patient_memory[uid] = empty_memory()
+    h = dialogue_history[uid]
+    h.append({"role": "user", "content": user_text})
+    if len(h) > MAX_HISTORY: h = h[-MAX_HISTORY:]
+    patient_memory[uid]["sessions"] = patient_memory[uid].get("sessions", 0) + 1
+    msgs = [{"role": "system", "content": build_prompt(uid)}] + h
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    data = {"model": OPENROUTER_MODEL, "messages": messages, "max_tokens": 800}
-    response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=30)
-    result = response.json()
-    anna_reply = result["choices"][0]["message"]["content"]
-    anna_reply = fix_gender_in_reply(user_id, anna_reply)
-    history.append({"role": "assistant", "content": anna_reply})
-    dialogue_history[user_id] = history
+    data = {"model": OPENROUTER_MODEL, "messages": msgs, "max_tokens": 800}
+    r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=30)
+    reply = r.json()["choices"][0]["message"]["content"]
+    reply = fix_gender(uid, reply)
+    h.append({"role": "assistant", "content": reply})
+    dialogue_history[uid] = h
     save_data()
-    if len(history) % 3 == 0:
-        extract_profile(user_id)
-    return anna_reply
+    return reply
 
-def mood_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=str(i), callback_data=f"mood_{i}") for i in range(1, 6)],
-        [InlineKeyboardButton(text=str(i), callback_data=f"mood_{i}") for i in range(6, 11)]
-    ])
+def mood_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=str(i), callback_data=f"mood_{i}") for i in range(1, 6)], [InlineKeyboardButton(text=str(i), callback_data=f"mood_{i}") for i in range(6, 11)]])
 
-def craving_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Слабая", callback_data="craving_low"), InlineKeyboardButton(text="Средняя", callback_data="craving_medium")],
-        [InlineKeyboardButton(text="Сильная", callback_data="craving_high"), InlineKeyboardButton(text="Невыносимая", callback_data="craving_extreme")]
-    ])
+def craving_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Слабая", callback_data="craving_low"), InlineKeyboardButton(text="Средняя", callback_data="craving_medium")], [InlineKeyboardButton(text="Сильная", callback_data="craving_high"), InlineKeyboardButton(text="Невыносимая", callback_data="craving_extreme")]])
 
-def gender_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="Мужской"), KeyboardButton(text="Женский")],
-        [KeyboardButton(text="Не важно")]
-    ], resize_keyboard=True)
+def gender_kb():
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Мужской"), KeyboardButton(text="Женский")], [KeyboardButton(text="Не важно")]], resize_keyboard=True)
 
-def main_menu_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🚨 Мне плохо сейчас"), KeyboardButton(text="🆘 Я на грани")],
-        [KeyboardButton(text="📊 Моё состояние"), KeyboardButton(text="🧠 Что я чувствую?")],
-        [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="🎯 Мои цели")],
-        [KeyboardButton(text="📚 Знания"), KeyboardButton(text="🧘 Дыхание")],
-        [KeyboardButton(text="ℹ️ Помощь и контакты"), KeyboardButton(text="⚙️ Настройки")]
-    ], resize_keyboard=True)
+def main_menu_kb():
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🚨 Мне плохо"), KeyboardButton(text="🆘 Я на грани")], [KeyboardButton(text="📊 Состояние"), KeyboardButton(text="🧠 Что я чувствую?")], [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="🎯 Цели")], [KeyboardButton(text="📚 Знания"), KeyboardButton(text="🧘 Дыхание")], [KeyboardButton(text="ℹ️ Помощь"), KeyboardButton(text="⚙️ Настройки")]], resize_keyboard=True)
 
-def crisis_menu_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🔥 У меня тяга")],
-        [KeyboardButton(text="😰 Паника/тревога")],
-        [KeyboardButton(text="😢 Очень грустно, нет сил")],
-        [KeyboardButton(text="💔 Я сорвался")],
-        [KeyboardButton(text="📞 Позвонить в службу поддержки")],
-        [KeyboardButton(text="⬅️ Назад в главное меню")]
-    ], resize_keyboard=True)
+def crisis_kb():
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔥 У меня тяга")], [KeyboardButton(text="😰 Паника")], [KeyboardButton(text="😢 Очень грустно")], [KeyboardButton(text="💔 Я сорвался")], [KeyboardButton(text="📞 Позвонить")], [KeyboardButton(text="⬅️ Назад в меню")]], resize_keyboard=True)
 
-def settings_menu_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="⏰ Указать время")],
-        [KeyboardButton(text="🔕 Приостановить поддержку")],
-        [KeyboardButton(text="🗑 Удалить все данные")],
-        [KeyboardButton(text="⬅️ Назад в главное меню")]
-    ], resize_keyboard=True)
+def settings_kb():
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="⏰ Время")], [KeyboardButton(text="🔕 Стоп поддержку")], [KeyboardButton(text="🗑 Удалить данные")], [KeyboardButton(text="⬅️ Назад в меню")]], resize_keyboard=True)
 
-def emotion_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="Грусть"), KeyboardButton(text="Тревога")],
-        [KeyboardButton(text="Злость"), KeyboardButton(text="Одиночество")],
-        [KeyboardButton(text="Стыд"), KeyboardButton(text="Страх")],
-        [KeyboardButton(text="Радость"), KeyboardButton(text="Усталость")],
-        [KeyboardButton(text="⬅️ Назад")]
-    ], resize_keyboard=True)
+def emotion_kb():
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Грусть"), KeyboardButton(text="Тревога")], [KeyboardButton(text="Злость"), KeyboardButton(text="Одиночество")], [KeyboardButton(text="Стыд"), KeyboardButton(text="Страх")], [KeyboardButton(text="Радость"), KeyboardButton(text="Усталость")], [KeyboardButton(text="⬅️ Назад")]], resize_keyboard=True)
 
-def education_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🧠 Нейробиология"), KeyboardButton(text="🧩 КПТ")],
-        [KeyboardButton(text="🧘 ДБТ"), KeyboardButton(text="⬅️ Назад")]
-    ], resize_keyboard=True)
+def education_kb():
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🧠 Нейробиология"), KeyboardButton(text="🧩 КПТ")], [KeyboardButton(text="🧘 ДБТ"), KeyboardButton(text="⬅️ Назад")]], resize_keyboard=True)
 
-def feedback_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1", callback_data="fb_1"), InlineKeyboardButton(text="2", callback_data="fb_2"),
-         InlineKeyboardButton(text="3", callback_data="fb_3"), InlineKeyboardButton(text="4", callback_data="fb_4"),
-         InlineKeyboardButton(text="5", callback_data="fb_5")]
-    ])
+def get_patient_time(uid):
+    return datetime.now(timezone.utc) + timedelta(hours=user_timezones.get(uid, 0))
 
-MOTIVATIONS = ["Ты сильнее, чем думаешь. 💪", "Каждый день — победа. 🌱", "Ты не один. 💚", "Маленькие шаги — большие перемены. ☀️", "Срыв — не провал. 🌊", "Ты достоин счастья. 💚", "Выбери себя. 🌱", "Твоя сила растёт. 💪"]
-
-def get_patient_time(user_id):
-    offset = user_timezones.get(user_id, 0)
-    return datetime.now(timezone.utc) + timedelta(hours=offset)
-
-def parse_patient_time(text):
-    text = text.strip()
-    match = re.match(r'^(\d{1,2}):(\d{2})$', text)
-    if match:
-        hour = int(match.group(1))
-        minute = int(match.group(2))
-        if 0 <= hour <= 23 and 0 <= minute <= 59:
-            patient_dt = datetime.now(timezone.utc).replace(hour=hour, minute=minute, second=0, microsecond=0)
-            utc_now = datetime.now(timezone.utc)
-            diff_hours = (patient_dt - utc_now).total_seconds() / 3600
-            offset = round(diff_hours)
-            if -12 <= offset <= 14:
-                return offset
+def parse_time(text):
+    m = re.match(r'^(\d{1,2}):(\d{2})$', text.strip())
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if 0 <= h <= 23 and 0 <= mn <= 59:
+            pdt = datetime.now(timezone.utc).replace(hour=h, minute=mn, second=0, microsecond=0)
+            diff = (pdt - datetime.now(timezone.utc)).total_seconds() / 3600
+            off = round(diff)
+            if -12 <= off <= 14: return off
     return None
+
+def is_crisis(text):
+    t = text.lower()
+    return any(w in t for w in CRISIS_WORDS)
+
+def is_delete(text):
+    t = text.lower()
+    return any(w in t for w in DELETE_WORDS)
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
 @dp.message(Command("start"))
-async def start_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    dialogue_history[user_id] = []
-    if user_id not in patient_memory:
-        patient_memory[user_id] = empty_memory()
-    if user_id not in patient_profiles:
-        patient_profiles[user_id] = empty_profile()
-    await message.answer(
-        "Я — виртуальный помощник Анна, а не врач. Я не ставлю диагнозы, не назначаю лечение, не заменяю очную психотерапию.\n\n"
-        "Ваши данные хранятся конфиденциально. Для удаления данных используйте /reset.\n\n"
-        "Нажмите «Согласен(а)», чтобы начать.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Согласен(а)", callback_data="consent_yes")],
-            [InlineKeyboardButton(text="Не согласен(а)", callback_data="consent_no")]
-        ])
-    )
+async def start_cmd(m: types.Message):
+    uid = str(m.from_user.id)
+    dialogue_history[uid] = []
+    if uid not in patient_memory: patient_memory[uid] = empty_memory()
+    if uid not in patient_profiles: patient_profiles[uid] = empty_profile()
+    await m.answer("Я — виртуальный помощник Анна, а не врач. Не ставлю диагнозы, не назначаю лечение.\n\nДанные конфиденциальны. Для удаления: /reset.\n\nНажмите «Согласен(а)».", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Согласен(а)", callback_data="consent_yes")], [InlineKeyboardButton(text="Не согласен(а)", callback_data="consent_no")]]))
 
 @dp.callback_query()
-async def handle_consent(callback: types.CallbackQuery):
-    user_id = str(callback.from_user.id)
-    if callback.data == "consent_yes":
-        user_consent[user_id] = True
-        save_data()
-        interview_step[user_id] = "name"
-        await callback.message.answer("Спасибо! Давай познакомимся. Как тебя зовут?")
-        await callback.answer()
-    elif callback.data == "consent_no":
-        await callback.message.answer("Хорошо. Если передумаешь, напиши /start.")
-        await callback.answer()
+async def consent_cb(c: types.CallbackQuery):
+    uid = str(c.from_user.id)
+    if c.data == "consent_yes":
+        user_consent[uid] = True; save_data()
+        interview_step[uid] = "name"
+        await c.message.answer("Спасибо! Как тебя зовут?")
+        await c.answer()
+    elif c.data == "consent_no":
+        await c.message.answer("Хорошо. Если передумаешь — /start.")
+        await c.answer()
     else:
-        await handle_callback(callback)
-
-@dp.message(Command("time"))
-async def time_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    text = message.text.replace("/time", "").strip()
-    offset = parse_patient_time(text)
-    if offset is not None:
-        user_timezones[user_id] = offset
-        save_data()
-        await message.answer("✅ Запомнила! Теперь напоминания будут в твоё время. 💚")
-    else:
-        await message.answer("Напиши время в формате ЧЧ:ММ, например: 14:30")
+        await callback_handler(c)
 
 @dp.message(Command("menu"))
-async def menu_command(message: types.Message):
-    await message.answer("Главное меню:", reply_markup=main_menu_keyboard())
+async def menu_cmd(m: types.Message): await m.answer("Меню:", reply_markup=main_menu_kb())
 
 @dp.message(Command("crisis"))
-async def crisis_command(message: types.Message):
-    await message.answer("Кризисное меню:", reply_markup=crisis_menu_keyboard())
+async def crisis_cmd(m: types.Message): await m.answer("Кризисное меню:", reply_markup=crisis_kb())
 
 @dp.message(Command("mood"))
-async def mood_command(message: types.Message):
-    await message.answer("Оцени своё состояние от 1 до 10:", reply_markup=mood_keyboard())
-
-@dp.message(Command("sober"))
-async def sober_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    if user_id in sober_tracker:
-        days = (datetime.now() - datetime.strptime(sober_tracker[user_id], "%Y-%m-%d")).days
-        await message.answer(f"💚 Ты чист(а) уже {days} дней!")
-    else:
-        await message.answer("Срывов пока не отмечалось. Это отлично! 💚")
-
-@dp.message(Command("relapse"))
-async def relapse_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    sober_tracker[user_id] = datetime.now().strftime("%Y-%m-%d")
-    relapse_times.append(datetime.now().strftime("%H:%M"))
-    congratulated[user_id] = []
-    update_memory(user_id, "important_events", "Срыв")
-    save_data()
-    stage_of_change[user_id] = "рецидив"
-    save_data()
-    await message.answer(
-        "Я не осуждаю. Спасибо, что поделился(ась). Срыв — это часть процесса.\n"
-        "Давай разберём, что произошло, и скорректируем план. Что случилось перед срывом?",
-        reply_markup=crisis_menu_keyboard()
-    )
-
-@dp.message(Command("plan"))
-async def plan_command(message: types.Message):
-    await message.answer(
-        "📋 Твой план действий при тяге:\n"
-        "1. Остановись и сделай паузу на 10 минут.\n"
-        "2. Умойся ледяной водой или подыши 4-4-4-4.\n"
-        "3. Позвони близкому или напиши мне.\n"
-        "4. Если тяга выше 7/10 — «Сёрфинг по тяге».\n"
-        "5. Вернись и расскажи, как прошло.",
-        reply_markup=main_menu_keyboard()
-    )
-
-@dp.message(Command("goals"))
-async def goals_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    if user_id in user_goals:
-        await message.answer(f"🎯 Твои цели:\n{user_goals[user_id]}")
-    else:
-        await message.answer("Цели пока не заданы. Напиши /goals <цель>.")
-
-@dp.message(Command("diary"))
-async def diary_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    diary_step[user_id] = "situation"
-    await message.answer("Давай сделаем запись в дневнике.\n\nШаг 1/4: Опиши ситуацию.")
+async def mood_cmd(m: types.Message): await m.answer("Оцени состояние:", reply_markup=mood_kb())
 
 @dp.message(Command("help"))
-async def help_command(message: types.Message):
-    await message.answer(
-        "ℹ️ Помощь и контакты:\n\n" + HOTLINES +
-        "\n\nДоступные команды:\n"
-        "/menu /crisis /mood /sober /relapse /plan /goals /diary /education /export /feedback /reset"
-    )
-
-@dp.message(Command("education"))
-async def education_command(message: types.Message):
-    await message.answer("📚 Что хочешь узнать?", reply_markup=education_keyboard())
-
-@dp.message(Command("export"))
-async def export_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    report = "📋 Отчёт Анны Соколовой\n\n"
-    report += f"Имя: {patient_profiles.get(user_id, {}).get('name', '—')}\n"
-    report += f"Пол: {patient_profiles.get(user_id, {}).get('gender', '—')}\n"
-    report += f"Зависимость: {patient_profiles.get(user_id, {}).get('addiction', '—')}\n"
-    report += f"Цели: {user_goals.get(user_id, '—')}\n"
-    days = 0
-    if user_id in sober_tracker:
-        days = (datetime.now() - datetime.strptime(sober_tracker[user_id], "%Y-%m-%d")).days
-    report += f"Дней чистоты: {days}\n\n"
-    report += "Оценки состояния:\n"
-    if user_id in mood_journal and mood_journal[user_id]:
-        for entry in mood_journal[user_id][-20:]:
-            report += f"• {entry}\n"
-    else:
-        report += "Нет записей\n"
-    await message.answer(report)
-
-@dp.message(Command("feedback"))
-async def feedback_command(message: types.Message):
-    await message.answer(
-        "Насколько полезной была наша последняя техника?\nОцени от 1 до 5:",
-        reply_markup=feedback_keyboard()
-    )
+async def help_cmd(m: types.Message): await m.answer("ℹ️ Контакты:\n\n" + HOTLINES + "\n\nКоманды:\n/menu /crisis /mood /reset")
 
 @dp.message(Command("reset"))
-async def reset_command(message: types.Message):
-    user_id = str(message.from_user.id)
-    await message.answer(
-        "Вы уверены, что хотите удалить все данные?\n"
-        "Напишите «Да, удалить» (или просто «Удалить») для подтверждения."
-    )
-    interview_step[user_id] = "confirm_reset"
+async def reset_cmd(m: types.Message):
+    uid = str(m.from_user.id)
+    await m.answer("Удалить все данные? Напишите «Да, удалить» или «Удалить».")
+    interview_step[uid] = "confirm_reset"
 
-@dp.message(Command("stop_care"))
-async def stop_care_command(message: types.Message):
-    care_mode[str(message.from_user.id)] = False
-    save_data()
-    await message.answer("Поддержка приостановлена.")
+@dp.message(Command("education"))
+async def edu_cmd(m: types.Message): await m.answer("📚 Что узнать?", reply_markup=education_kb())
 
-@dp.message(lambda message: message.voice is not None)
-async def handle_voice(message: types.Message):
-    await message.answer("Я слышу тебя. Опиши текстом. 💚")
+@dp.message(lambda m: m.voice is not None)
+async def voice_handler(m: types.Message): await m.answer("Я слышу тебя. Опиши текстом. 💚")
 
 @dp.message()
-async def handle_message(message: types.Message):
-    user_id = str(message.from_user.id)
-    text = message.text
+async def handle(m: types.Message):
+    uid = str(m.from_user.id)
+    text = m.text
 
-    # Проверка согласия
-    if user_id not in user_consent or not user_consent[user_id]:
+    # Согласие
+    if uid not in user_consent or not user_consent[uid]:
         if text == "Согласен(а)":
-            user_consent[user_id] = True
-            save_data()
-            interview_step[user_id] = "name"
-            await message.answer("Спасибо! Как тебя зовут?")
-            return
+            user_consent[uid] = True; save_data()
+            interview_step[uid] = "name"
+            await m.answer("Спасибо! Как тебя зовут?"); return
         elif text == "Не согласен(а)":
-            await message.answer("Хорошо. Если передумаешь, напиши /start.")
-            return
+            await m.answer("Хорошо. Если передумаешь — /start."); return
         else:
-            await message.answer("Пожалуйста, дай согласие или напиши /start.")
-            return
+            await m.answer("Дай согласие или /start."); return
+
+    # КРИЗИС
+    if is_crisis(text):
+        crisis_step[uid] = "asked_plan"; save_data()
+        await m.answer(f"Алексей, я слышу тебя. Это очень серьёзно.\n\nОтветь честно:\n1. Есть ли конкретный план?\n2. Есть ли доступ к средствам?\n\nОт этого зависит моя помощь.")
+        return
+
+    if crisis_step.get(uid) == "asked_plan":
+        t = text.lower()
+        if any(w in t for w in ["да", "есть", "yes", "знаю"]):
+            crisis_step[uid] = "high"
+            save_data()
+            await m.answer("Это критично. Я не могу продолжать терапию, пока ты в опасности.\n\n🚨 Позвони прямо сейчас:\n📞 112\n📞 8-800-2000-122\n\nПопроси близкого быть рядом. Сделай это сейчас.")
+        else:
+            crisis_step[uid] = "low"
+            save_data()
+            await m.answer("Спасибо за честность. Позвони на бесплатную линию: 8-800-2000-122 (круглосуточно).\n\nРасскажи, что привело к таким мыслям?")
+        return
+
+    if crisis_step.get(uid) == "high":
+        await m.answer("Алексей, я всё ещё здесь. Позвони 112 или 8-800-2000-122 прямо сейчас. Это минута, но она может спасти жизнь.\n\nЯ не могу продолжать, пока ты в опасности. Позвони.")
+        return
+
+    # УДАЛЕНИЕ ДАННЫХ
+    if is_delete(text):
+        await m.answer("Алексей, я уважаю твоё право. Введи /reset — после подтверждения всё будет стёрто (история, анкета, дневник).")
+        return
 
     # Подтверждение сброса
-    if interview_step.get(user_id) == "confirm_reset":
-        text_lower = text.lower().strip()
-        if text_lower in ["да, удалить", "да удалить", "удалить", "да", "подтверждаю", "yes", "delete"]:
-            dialogue_history.pop(user_id, None)
-            mood_journal.pop(user_id, None)
-            care_mode.pop(user_id, None)
-            patient_profiles.pop(user_id, None)
-            patient_memory.pop(user_id, None)
-            behavior_journal.pop(user_id, None)
-            sober_tracker.pop(user_id, None)
-            user_goals.pop(user_id, None)
-            congratulated.pop(user_id, None)
-            user_timezones.pop(user_id, None)
-            interview_step.pop(user_id, None)
-            last_activity.pop(user_id, None)
-            user_consent.pop(user_id, None)
-            stage_of_change.pop(user_id, None)
-            emotion_step.pop(user_id, None)
-            diary_step.pop(user_id, None)
-            feedback_data.pop(user_id, None)
-            daily_reminders.pop(user_id, None)
-            education_step.pop(user_id, None)
-            save_data()
-            await message.answer("Все данные удалены. Чтобы начать заново, напиши /start.")
-            return
+    if interview_step.get(uid) == "confirm_reset":
+        t = text.lower().strip()
+        if t in ["да, удалить", "да удалить", "удалить", "да", "подтверждаю", "yes"]:
+            for k in list(dialogue_history.keys()):
+                if k == uid: dialogue_history.pop(uid, None)
+            mood_journal.pop(uid, None); care_mode.pop(uid, None); patient_profiles.pop(uid, None)
+            patient_memory.pop(uid, None); sober_tracker.pop(uid, None); user_goals.pop(uid, None)
+            user_timezones.pop(uid, None); interview_step.pop(uid, None); user_consent.pop(uid, None)
+            emotion_step.pop(uid, None); diary_step.pop(uid, None); crisis_step.pop(uid, None)
+            daily_reminders.pop(uid, None); save_data()
+            await m.answer("Все данные удалены. /start для начала."); return
         else:
-            interview_step.pop(user_id, None)
-            await message.answer("Сброс отменён.")
-            return
+            interview_step.pop(uid, None)
+            await m.answer("Сброс отменён."); return
 
-    # ============ ИНТЕРВЬЮ ============
-    step = interview_step.get(user_id)
-
+    # ИНТЕРВЬЮ
+    step = interview_step.get(uid)
     if step == "name":
-        patient_profiles[user_id]["name"] = text.strip()
-        save_data()
-        interview_step[user_id] = "gender"
-        await message.answer(
-            f"Приятно познакомиться, {text.strip()}! 🌱\n\n"
-            "Как к тебе обращаться?",
-            reply_markup=gender_keyboard()
-        )
-        return
-
+        patient_profiles[uid]["name"] = text.strip(); save_data()
+        interview_step[uid] = "gender"
+        await m.answer(f"Приятно познакомиться, {text.strip()}! 🌱\n\nКак к тебе обращаться?", reply_markup=gender_kb()); return
     if step == "gender":
         if text in ["Мужской", "Женский", "Не важно"]:
-            if text == "Мужской":
-                patient_profiles[user_id]["gender"] = "мужской"
-            elif text == "Женский":
-                patient_profiles[user_id]["gender"] = "женский"
-            else:
-                patient_profiles[user_id]["gender"] = "не указан"
-            save_data()
-            interview_step[user_id] = "problem"
-            await message.answer("Спасибо. С чем ты хочешь работать? Например: зависимость, тревога, депрессия, стресс...")
+            patient_profiles[uid]["gender"] = "мужской" if text == "Мужской" else ("женский" if text == "Женский" else "не указан")
+            save_data(); interview_step[uid] = "problem"
+            await m.answer("Спасибо. С чем хочешь работать?")
         else:
-            await message.answer("Пожалуйста, выбери один из вариантов на кнопках.", reply_markup=gender_keyboard())
+            await m.answer("Выбери из кнопок.", reply_markup=gender_kb())
         return
-
     if step == "problem":
-        patient_profiles[user_id]["addiction"] = text.strip()
-        save_data()
-        interview_step[user_id] = "level"
-        await message.answer("Поняла. Оцени, насколько это тебя беспокоит, от 1 до 10:", reply_markup=mood_keyboard())
-        return
-
+        patient_profiles[uid]["addiction"] = text.strip(); save_data()
+        interview_step[uid] = "level"
+        await m.answer("Оцени, насколько это беспокоит, от 1 до 10:", reply_markup=mood_kb()); return
     if step == "time":
-        offset = parse_patient_time(text)
-        if offset is not None:
-            user_timezones[user_id] = offset
-            save_data()
-            interview_step[user_id] = "done"
-            await message.answer(
-                "✅ Время сохранено. Теперь мы можем начать. Расскажи, что тебя сейчас беспокоит больше всего?",
-                reply_markup=main_menu_keyboard()
-            )
+        off = parse_time(text)
+        if off is not None:
+            user_timezones[uid] = off; save_data(); interview_step[uid] = "done"
+            await m.answer("✅ Время сохранено. Расскажи, что беспокоит больше всего?", reply_markup=main_menu_kb())
         else:
-            await message.answer("Напиши время в формате ЧЧ:ММ, например 14:30")
+            await m.answer("Формат ЧЧ:ММ, например 14:30")
         return
 
-    # ============ КНОПКА НАЗАД ============
-    if text == "⬅️ Назад" or text == "⬅️ Назад в главное меню":
-        interview_step.pop(user_id, None)
-        emotion_step.pop(user_id, None)
-        diary_step.pop(user_id, None)
-        education_step.pop(user_id, None)
-        await message.answer("Главное меню:", reply_markup=main_menu_keyboard())
-        return
+    # НАЗАД
+    if text in ["⬅️ Назад", "⬅️ Назад в меню", "⬅️ Назад в главное меню"]:
+        interview_step.pop(uid, None); emotion_step.pop(uid, None); diary_step.pop(uid, None)
+        await m.answer("Меню:", reply_markup=main_menu_kb()); return
 
-    # ============ ГЛАВНОЕ МЕНЮ ============
-    if text == "🚨 Мне плохо сейчас":
-        await message.answer("Выбери, что происходит:", reply_markup=crisis_menu_keyboard())
-        return
-    elif text == "🆘 Я на грани":
-        await message.answer(
-            "Ты на грани? Давай продержимся вместе.\n"
-            "1. Умойся ледяной водой.\n"
-            "2. Дыши 4-4-4-4.\n"
-            "3. Позвони близкому или напиши мне.\n\n"
-            "Если тяга выше 7/10 — «Сёрфинг по тяге»: тяга нарастает и спадает.",
-            reply_markup=craving_keyboard()
-        )
-        return
-    elif text == "📊 Моё состояние":
-        days = 0
-        if user_id in sober_tracker:
-            days = (datetime.now() - datetime.strptime(sober_tracker[user_id], "%Y-%m-%d")).days
-        last_moods = mood_journal.get(user_id, [])[-5:]
-        mood_str = "\n".join(last_moods) if last_moods else "нет записей"
-        await message.answer(f"📊 Твоё состояние:\n\nДней чистоты: {days}\n\nПоследние оценки:\n{mood_str}", reply_markup=main_menu_keyboard())
-        return
-    elif text == "🧠 Что я чувствую?":
-        emotion_step[user_id] = "choose"
-        await message.answer("Какое чувство ты испытываешь прямо сейчас?", reply_markup=emotion_keyboard())
-        return
-    elif text == "📝 Дневник":
-        diary_step[user_id] = "situation"
-        await message.answer("Давай сделаем запись.\n\nШаг 1/4: Опиши ситуацию.")
-        return
-    elif text == "🎯 Мои цели":
-        goals = user_goals.get(user_id, "")
-        if goals:
-            await message.answer(f"Твои цели:\n{goals}\n\nЧтобы добавить новую, напиши: /goals <цель>", reply_markup=main_menu_keyboard())
-        else:
-            await message.answer("Цели пока не заданы. Напиши: /goals <цель>", reply_markup=main_menu_keyboard())
-        return
-    elif text == "📚 Знания":
-        await message.answer("📚 Что хочешь узнать?", reply_markup=education_keyboard())
-        return
-    elif text == "🧠 Нейробиология":
-        await message.answer(PSYCHOEDUCATION["neuro"], reply_markup=education_keyboard())
-        return
-    elif text == "🧩 КПТ":
-        await message.answer(PSYCHOEDUCATION["cbt"], reply_markup=education_keyboard())
-        return
-    elif text == "🧘 ДБТ":
-        await message.answer(PSYCHOEDUCATION["dbt"], reply_markup=education_keyboard())
-        return
-    elif text == "🧘 Дыхание":
-        await message.answer(
-            "🧘 *Дыхание по квадрату (4-4-4-4)*\n\n"
-            "1. Вдох — 4 секунды\n"
-            "2. Пауза — 4 секунды\n"
-            "3. Выдох — 4 секунды\n"
-            "4. Пауза — 4 секунды\n\n"
-            "Повтори 5 раз. Это снижает тревогу за 1–2 минуты.",
-            reply_markup=main_menu_keyboard()
-        )
-        return
-    elif text == "ℹ️ Помощь и контакты":
-        await message.answer(HOTLINES, reply_markup=main_menu_keyboard())
-        return
-    elif text == "⚙️ Настройки":
-        await message.answer("Настройки:", reply_markup=settings_menu_keyboard())
-        return
-    elif text == "🔥 У меня тяга":
-        await message.answer("Оцени силу тяги от 1 до 10:", reply_markup=craving_keyboard())
-        return
-    elif text == "😰 Паника/тревога":
-        await message.answer(
-            "Сделай следующее:\n"
-            "1. Назови 5 вещей, которые видишь.\n"
-            "2. Назови 4 вещи, которые слышишь.\n"
-            "3. Назови 3 вещи, которые чувствуешь.\n"
-            "4. Медленно вдохни и выдохни 5 раз.",
-            reply_markup=crisis_menu_keyboard()
-        )
-        return
-    elif text == "😢 Очень грустно, нет сил":
-        await message.answer(
-            "Мне жаль, что тебе так тяжело. Я хочу помочь.\n\n"
-            "Есть ли у тебя мысли о том, чтобы навредить себе? (да/нет)"
-        )
-        emotion_step[user_id] = "suicide_risk_1"
-        return
-    elif text == "💔 Я сорвался":
-        sober_tracker[user_id] = datetime.now().strftime("%Y-%m-%d")
+    # МЕНЮ
+    if text == "🚨 Мне плохо": await m.answer("Что происходит?", reply_markup=crisis_kb()); return
+    if text == "🆘 Я на грани":
+        await m.answer("Продержимся вместе:\n1. Умойся ледяной водой.\n2. Дыши 4-4-4-4.\n3. Позвони близкому.\n\nТяга — волна, нарастает и спадает.", reply_markup=craving_kb()); return
+    if text == "📊 Состояние":
+        d = 0
+        if uid in sober_tracker: d = (datetime.now() - datetime.strptime(sober_tracker[uid], "%Y-%m-%d")).days
+        lm = mood_journal.get(uid, [])[-5:]
+        await m.answer(f"📊 Состояние:\n\nДней чистоты: {d}\n\nПоследние оценки:\n" + ("\n".join(lm) if lm else "нет"), reply_markup=main_menu_kb()); return
+    if text == "🧠 Что я чувствую?":
+        emotion_step[uid] = "choose"
+        await m.answer("Какое чувство?", reply_markup=emotion_kb()); return
+    if text == "📝 Дневник":
+        diary_step[uid] = "situation"
+        await m.answer("Шаг 1/4: Опиши ситуацию."); return
+    if text == "🎯 Цели":
+        g = user_goals.get(uid, "")
+        await m.answer(f"Цели:\n{g}" if g else "Напиши /goals <цель>", reply_markup=main_menu_kb()); return
+    if text == "📚 Знания": await m.answer("📚 Что узнать?", reply_markup=education_kb()); return
+    if text == "🧠 Нейробиология": await m.answer(PSYCHOEDUCATION["neuro"], reply_markup=education_kb()); return
+    if text == "🧩 КПТ": await m.answer(PSYCHOEDUCATION["cbt"], reply_markup=education_kb()); return
+    if text == "🧘 ДБТ": await m.answer(PSYCHOEDUCATION["dbt"], reply_markup=education_kb()); return
+    if text == "🧘 Дыхание":
+        await m.answer("🧘 Дыхание 4-4-4-4:\nВдох 4 — пауза 4 — выдох 4 — пауза 4.\nПовтори 5 раз.", reply_markup=main_menu_kb()); return
+    if text == "ℹ️ Помощь": await m.answer(HOTLINES, reply_markup=main_menu_kb()); return
+    if text == "⚙️ Настройки": await m.answer("Настройки:", reply_markup=settings_kb()); return
+    if text == "🔥 У меня тяга": await m.answer("Оцени силу тяги:", reply_markup=craving_kb()); return
+    if text == "😰 Паника":
+        await m.answer("Это паника. Пройдёт за 10–20 минут. Ты в безопасности.\n\nДыши со мной: вдох 4, задержка 4, выдох 4. Повтори 3 раза. Я жду.", reply_markup=crisis_kb()); return
+    if text == "😢 Очень грустно":
+        crisis_step[uid] = "asked_plan"; save_data()
+        await m.answer("Мне жаль. Есть ли мысли навредить себе? (да/нет)"); return
+    if text == "💔 Я сорвался":
+        sober_tracker[uid] = datetime.now().strftime("%Y-%m-%d")
         relapse_times.append(datetime.now().strftime("%H:%M"))
-        congratulated[user_id] = []
-        update_memory(user_id, "important_events", "Срыв")
-        save_data()
-        stage_of_change[user_id] = "рецидив"
-        save_data()
-        await message.answer(
-            "Спасибо за честность. Срыв — это не поражение, а информация.\n"
-            "Что произошло перед срывом? Опиши ситуацию.",
-            reply_markup=crisis_menu_keyboard()
-        )
-        return
-    elif text == "📞 Позвонить в службу поддержки":
-        await message.answer(HOTLINES, reply_markup=crisis_menu_keyboard())
-        return
-    elif text == "⏰ Указать время":
-        await message.answer("Напиши текущее время в формате ЧЧ:ММ, например 14:30")
-        interview_step[user_id] = "time"
-        return
-    elif text == "🔕 Приостановить поддержку":
-        care_mode[user_id] = False
-        save_data()
-        await message.answer("Поддержка приостановлена.", reply_markup=main_menu_keyboard())
-        return
-    elif text == "🗑 Удалить все данные":
-        await message.answer(
-            "Вы уверены? Это действие необратимо.\n"
-            "Напишите «Да, удалить» (или просто «Удалить») для подтверждения."
-        )
-        interview_step[user_id] = "confirm_reset"
-        return
-    elif text.lower() == "как помочь близкому":
-        await message.answer(
-            "Если ты близкий человек зависимого:\n"
-            "1. Заботься о себе.\n"
-            "2. Устанавливай границы.\n"
-            "3. Не вини себя — зависимость это болезнь.\n"
-            "4. Поддерживай, но не контролируй.\n"
-            "5. Обратись в группы для созависимых.",
-            reply_markup=main_menu_keyboard()
-        )
+        update_memory(uid, "progress_notes", "Срыв"); save_data()
+        await m.answer("Спасибо за честность. Что было перед срывом?", reply_markup=crisis_kb()); return
+    if text == "📞 Позвонить": await m.answer(HOTLINES, reply_markup=crisis_kb()); return
+    if text == "⏰ Время": await m.answer("Напиши время ЧЧ:ММ"); interview_step[uid] = "time"; return
+    if text == "🔕 Стоп поддержку": care_mode[uid] = False; save_data(); await m.answer("Поддержка остановлена.", reply_markup=main_menu_kb()); return
+    if text == "🗑 Удалить данные": await m.answer("Удалить всё? Напиши «Да, удалить»."); interview_step[uid] = "confirm_reset"; return
+
+    # ЭМОЦИИ
+    if emotion_step.get(uid) == "choose":
+        if text in ["Грусть", "Тревога", "Злость", "Одиночество", "Стыд", "Страх", "Радость", "Усталость"]:
+            emotion_step[uid] = "intensity"
+            if uid not in patient_memory: patient_memory[uid] = empty_memory()
+            patient_memory[uid]["last_emotion"] = text; save_data()
+            await m.answer(f"Выбрано: {text}. Оцени интенсивность:", reply_markup=mood_kb())
+        else:
+            await m.answer("Выбери из кнопок.", reply_markup=emotion_kb())
         return
 
-    # ============ ЭМОЦИИ ============
-    if emotion_step.get(user_id) == "choose":
-        valid_emotions = ["Грусть", "Тревога", "Злость", "Одиночество", "Стыд", "Страх", "Радость", "Усталость"]
-        if text in valid_emotions:
-            emotion_step[user_id] = "intensity"
-            if user_id not in patient_memory:
-                patient_memory[user_id] = empty_memory()
-            patient_memory[user_id]["last_emotion"] = text
-            save_data()
-            await message.answer(f"Ты выбрал(а) {text}. Оцени интенсивность от 1 до 10:", reply_markup=mood_keyboard())
-        else:
-            await message.answer("Пожалуйста, выбери эмоцию из кнопок.", reply_markup=emotion_keyboard())
-        return
+    # ДНЕВНИК
+    if diary_step.get(uid):
+        s = diary_step[uid]
+        if uid not in patient_memory: patient_memory[uid] = empty_memory()
+        if s == "situation": patient_memory[uid]["d_s"] = text; diary_step[uid] = "thought"; await m.answer("Шаг 2/4: Мысль?"); return
+        if s == "thought": patient_memory[uid]["d_t"] = text; diary_step[uid] = "emotion"; await m.answer("Шаг 3/4: Эмоция?"); return
+        if s == "emotion": patient_memory[uid]["d_e"] = text; diary_step[uid] = "action"; await m.answer("Шаг 4/4: Действие?"); return
+        if s == "action":
+            entry = f"Ситуация: {patient_memory[uid].get('d_s','')}\nМысль: {patient_memory[uid].get('d_t','')}\nЭмоция: {patient_memory[uid].get('d_e','')}\nДействие: {text}"
+            if uid not in mood_journal: mood_journal[uid] = []
+            mood_journal[uid].append(f"[Дневник] {entry}")
+            diary_step.pop(uid, None)
+            for k in ["d_s", "d_t", "d_e"]: patient_memory[uid].pop(k, None)
+            save_data(); await m.answer("Запись сохранена. 💚", reply_markup=main_menu_kb()); return
 
-    # ============ ДНЕВНИК ============
-    if diary_step.get(user_id):
-        step = diary_step[user_id]
-        if user_id not in patient_memory:
-            patient_memory[user_id] = empty_memory()
-        if step == "situation":
-            patient_memory[user_id]["diary_situation"] = text
-            diary_step[user_id] = "thought"
-            await message.answer("Шаг 2/4: Какая мысль возникла?")
-            return
-        elif step == "thought":
-            patient_memory[user_id]["diary_thought"] = text
-            diary_step[user_id] = "emotion"
-            await message.answer("Шаг 3/4: Что ты почувствовал(а)?")
-            return
-        elif step == "emotion":
-            patient_memory[user_id]["diary_emotion"] = text
-            diary_step[user_id] = "action"
-            await message.answer("Шаг 4/4: Что ты сделал(а)?")
-            return
-        elif step == "action":
-            situation = patient_memory[user_id].get("diary_situation", "")
-            thought = patient_memory[user_id].get("diary_thought", "")
-            emotion = patient_memory[user_id].get("diary_emotion", "")
-            action = text
-            entry = f"Ситуация: {situation}\nМысль: {thought}\nЭмоция: {emotion}\nДействие: {action}"
-            if user_id not in mood_journal:
-                mood_journal[user_id] = []
-            mood_journal[user_id].append(f"[Дневник] {entry}")
-            save_data()
-            diary_step.pop(user_id, None)
-            for k in ["diary_situation", "diary_thought", "diary_emotion"]:
-                patient_memory[user_id].pop(k, None)
-            save_data()
-            await message.answer("Запись сохранена. 💚", reply_markup=main_menu_keyboard())
-            return
-
-    # ============ ОЦЕНКА СУИЦИДАЛЬНОГО РИСКА ============
-    if emotion_step.get(user_id) == "suicide_risk_1":
-        if text.lower() in ["да", "yes", "есть"]:
-            await message.answer("Есть ли у тебя конкретный план?")
-            emotion_step[user_id] = "suicide_risk_2"
-        else:
-            await message.answer("Хорошо, что ты сказал(а). Ты не один(а).", reply_markup=crisis_menu_keyboard())
-            emotion_step.pop(user_id, None)
-        return
-    elif emotion_step.get(user_id) == "suicide_risk_2":
-        if text.lower() in ["да", "yes", "есть"]:
-            await message.answer("Есть ли у тебя доступ к средствам?")
-            emotion_step[user_id] = "suicide_risk_3"
-        else:
-            await message.answer("Пожалуйста, позвони 8-800-2000-122 или 112.", reply_markup=crisis_menu_keyboard())
-            emotion_step.pop(user_id, None)
-        return
-    elif emotion_step.get(user_id) == "suicide_risk_3":
-        if text.lower() in ["да", "yes", "есть"]:
-            await message.answer(
-                "Сейчас важно позвонить 112 или попросить кого-то быть рядом.\n"
-                "Набери номер экстренной службы.",
-                reply_markup=crisis_menu_keyboard()
-            )
-        else:
-            await message.answer("Пожалуйста, обратись к близким или позвони 8-800-2000-122.", reply_markup=crisis_menu_keyboard())
-        emotion_step.pop(user_id, None)
-        return
-
-    # ============ ОБЫЧНЫЙ ДИАЛОГ ============
+    # Обычный диалог
     try:
-        anna_reply = ask_anna(user_id, text)
-        clean = anna_reply.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
-        if "[CRAVING]" in anna_reply:
-            await message.answer(clean, reply_markup=craving_keyboard())
-        elif "[MOOD]" in anna_reply:
-            await message.answer(clean, reply_markup=mood_keyboard())
-        else:
-            await message.answer(clean)
+        r = ask_anna(uid, text)
+        clean = r.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
+        if "[CRAVING]" in r: await m.answer(clean, reply_markup=craving_kb())
+        elif "[MOOD]" in r: await m.answer(clean, reply_markup=mood_kb())
+        else: await m.answer(clean)
     except Exception as e:
-        print(f"Ошибка: {e}")
-        await message.answer("Прости, ошибка. Попробуй ещё раз.")
+        print(f"Err: {e}"); await m.answer("Ошибка. Попробуй ещё раз.")
 
 @dp.callback_query()
-async def handle_callback(callback: types.CallbackQuery):
-    user_id = str(callback.from_user.id)
-    data = callback.data
-
-    if data.startswith("mood_"):
-        v = int(data.split("_")[1])
-        if user_id not in mood_journal:
-            mood_journal[user_id] = []
-        mood_journal[user_id].append(f"{datetime.now().strftime('%d.%m.%Y %H:%M')} — {v}/10")
-        update_memory(user_id, "progress_notes", f"Оценка {v}/10")
-        record_behavior(user_id, f"[Оценка: {v}/10]", mood_score=v)
-
-        # Если это шаг интервью «level»
-        if interview_step.get(user_id) == "level":
-            if user_id not in patient_profiles:
-                patient_profiles[user_id] = empty_profile()
-            patient_profiles[user_id]["stage"] = f"Уровень: {v}/10"
-            save_data()
-            interview_step[user_id] = "time"
-            await callback.message.answer(
-                f"Спасибо. Теперь я понимаю твою ситуацию лучше. 💚\n\n"
-                "И последнее: сколько у тебя сейчас времени?\n"
-                "Напиши в формате ЧЧ:ММ, например: 14:30"
-            )
-        # Если это опрос эмоций
-        elif emotion_step.get(user_id) == "intensity":
-            if user_id not in patient_memory:
-                patient_memory[user_id] = empty_memory()
-            emotion = patient_memory[user_id].get("last_emotion", "")
-            if emotion:
-                mood_journal[user_id].append(f"[Эмоция] {emotion}: {v}/10")
-                save_data()
-                await callback.message.answer(f"Записал: {emotion} ({v}/10). 💚", reply_markup=main_menu_keyboard())
-                emotion_step.pop(user_id, None)
-            else:
-                await callback.message.answer("Ошибка, попробуй ещё раз.", reply_markup=emotion_keyboard())
-        # Обычная оценка
+async def callback_handler(c: types.CallbackQuery):
+    uid = str(c.from_user.id)
+    d = c.data
+    if d.startswith("mood_"):
+        v = int(d.split("_")[1])
+        if uid not in mood_journal: mood_journal[uid] = []
+        mood_journal[uid].append(f"{datetime.now().strftime('%d.%m.%Y %H:%M')} — {v}/10")
+        if interview_step.get(uid) == "level":
+            if uid not in patient_profiles: patient_profiles[uid] = empty_profile()
+            patient_profiles[uid]["stage"] = f"Уровень: {v}/10"; save_data()
+            interview_step[uid] = "time"
+            await c.message.answer("Спасибо. Сколько у тебя сейчас времени? ЧЧ:ММ")
+        elif emotion_step.get(uid) == "intensity":
+            e = patient_memory[uid].get("last_emotion", "")
+            if e: mood_journal[uid].append(f"[Эмоция] {e}: {v}/10")
+            emotion_step.pop(uid, None); save_data()
+            await c.message.answer(f"Записал: {e} ({v}/10). 💚", reply_markup=main_menu_kb())
         else:
-            if v <= 5:
-                care_mode[user_id] = True
-                await callback.message.answer(f"Спасибо ({v}/10). Я рядом. 💚")
-            else:
-                care_mode[user_id] = False
-                await callback.message.answer(f"Отлично! {v}/10. ☀️")
-        save_data()
-        await callback.answer()
-    elif data.startswith("craving_"):
-        levels = {"low": "Слабая", "medium": "Средняя", "high": "Сильная", "extreme": "Невыносимая"}
-        level = levels.get(data.replace("craving_", ""), "")
-        if user_id in dialogue_history:
-            dialogue_history[user_id].append({"role": "system", "content": f"Тяга оценена: {level}. Тема закрыта."})
-        save_data()
-        await callback.message.answer(f"Тяга: {level}. Опиши, где в теле ты её чувствуешь? 🌊")
-        await callback.answer()
-    elif data.startswith("fb_"):
-        fb_val = int(data.split("_")[1])
-        if user_id not in feedback_data:
-            feedback_data[user_id] = []
-        feedback_data[user_id].append(fb_val)
-        save_data()
-        await callback.message.answer("Спасибо за обратную связь! 💚")
-        await callback.answer()
-    else:
-        await callback.answer()
+            if v <= 5: care_mode[uid] = True; await c.message.answer(f"Спасибо ({v}/10). Я рядом. 💚")
+            else: care_mode[uid] = False; await c.message.answer(f"Отлично! {v}/10. ☀️")
+        save_data(); await c.answer()
+    elif d.startswith("craving_"):
+        lv = {"low": "Слабая", "medium": "Средняя", "high": "Сильная", "extreme": "Невыносимая"}
+        l = lv.get(d.replace("craving_", ""), "")
+        await c.message.answer(f"Тяга: {l}. Где в теле? 🌊")
+        await c.answer()
+    else: await c.answer()
 
-async def send_reminders():
+async def reminders():
     while True:
-        for uid in list(dialogue_history.keys()):
-            patient_now = get_patient_time(uid)
-            patient_time_str = patient_now.strftime("%H:%M")
-            patient_date_str = patient_now.strftime("%Y-%m-%d")
-
-            if patient_time_str == "09:00":
-                last_date = daily_reminders.get(uid, {}).get("morning")
-                if last_date != patient_date_str:
-                    try:
-                        await bot.send_message(uid, "🌅 Доброе утро! Оцени своё состояние:", reply_markup=mood_keyboard())
-                        daily_reminders.setdefault(uid, {})["morning"] = patient_date_str
-                        save_data()
-                    except:
-                        pass
-
-            if patient_time_str == "21:00":
-                last_date = daily_reminders.get(uid, {}).get("evening")
-                if last_date != patient_date_str:
-                    try:
-                        await bot.send_message(uid, "🌙 Как прошёл день? Оцени:", reply_markup=mood_keyboard())
-                        daily_reminders.setdefault(uid, {})["evening"] = patient_date_str
-                        save_data()
-                    except:
-                        pass
-
+        for u in list(dialogue_history.keys()):
+            now = get_patient_time(u)
+            ts, ds = now.strftime("%H:%M"), now.strftime("%Y-%m-%d")
+            if ts == "09:00" and daily_reminders.get(u, {}).get("m") != ds:
+                try:
+                    await bot.send_message(u, "🌅 Доброе утро! Оцени:", reply_markup=mood_kb())
+                    daily_reminders.setdefault(u, {})["m"] = ds; save_data()
+                except: pass
+            if ts == "21:00" and daily_reminders.get(u, {}).get("e") != ds:
+                try:
+                    await bot.send_message(u, "🌙 Как день? Оцени:", reply_markup=mood_kb())
+                    daily_reminders.setdefault(u, {})["e"] = ds; save_data()
+                except: pass
         await asyncio.sleep(30)
 
-async def smart_reminders():
-    while True:
-        await asyncio.sleep(1800)
-        if relapse_times:
-            common_time = Counter(relapse_times).most_common(1)[0][0]
-            if datetime.now().strftime("%H:%M") == common_time:
-                for uid in dialogue_history.keys():
-                    try:
-                        await bot.send_message(uid, "⏰ В это время раньше случались срывы. Будь внимателен. 💚")
-                    except:
-                        pass
-
-async def send_hourly_care():
-    messages = ["🌱 Я рядом.", "💭 Что внутри?", "☀️ Держишься!", "🌊 Волна спадает.", "💪 Ты сильнее!", "🧘 4-4-4-4.", "📋 Что сделаешь?", "🌙 Ты не один."]
+async def care():
+    msgs = ["🌱 Я рядом.", "💭 Что внутри?", "☀️ Держишься!", "🌊 Волна спадает.", "💪 Ты сильнее!"]
     while True:
         await asyncio.sleep(3600)
-        for uid in list(care_mode.keys()):
-            if care_mode.get(uid, False):
-                try:
-                    await bot.send_message(uid, random.choice(messages))
-                except:
-                    pass
+        for u in list(care_mode.keys()):
+            if care_mode.get(u, False):
+                try: await bot.send_message(u, random.choice(msgs))
+                except: pass
 
-async def send_congratulations():
-    while True:
-        await asyncio.sleep(3600)
-        for uid in list(sober_tracker.keys()):
-            days = (datetime.now() - datetime.strptime(sober_tracker[uid], "%Y-%m-%d")).days
-            for m in [3, 7, 14, 30]:
-                if days == m and m not in congratulated.get(uid, []):
-                    congratulated.setdefault(uid, []).append(m)
-                    save_data()
-                    emoji = {3: "💪", 7: "🥉", 14: "🥈", 30: "🏆"}[m]
-                    try:
-                        await bot.send_message(uid, f"{emoji} {m} дней! Ты невероятен!")
-                    except:
-                        pass
+class H(BaseHTTPRequestHandler):
+    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
+    def do_HEAD(self): self.send_response(200); self.end_headers()
+    def do_POST(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
+    def do_OPTIONS(self): self.send_response(200); self.end_headers()
+    def log_message(self, *a): pass
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-    def do_POST(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.end_headers()
-    def log_message(self, format, *args):
-        pass
-
-def start_http_server():
+def start_http():
     try:
-        port = int(os.environ.get("PORT", 10000))
-        server = HTTPServer(("0.0.0.0", port), HealthHandler)
-        def self_ping():
+        p = int(os.environ.get("PORT", 10000))
+        s = HTTPServer(("0.0.0.0", p), H)
+        def ping():
             while True:
-                try:
-                    requests.get(f"http://localhost:{port}/", timeout=5)
-                except:
-                    pass
+                try: requests.get(f"http://localhost:{p}/", timeout=5)
+                except: pass
                 time.sleep(300)
-        threading.Thread(target=self_ping, daemon=True).start()
-        server.serve_forever()
-    except:
-        pass
+        threading.Thread(target=ping, daemon=True).start()
+        s.serve_forever()
+    except: pass
 
 async def main():
     load_data()
     await bot.delete_webhook(drop_pending_updates=True)
-    asyncio.create_task(send_reminders())
-    asyncio.create_task(send_hourly_care())
-    asyncio.create_task(send_congratulations())
-    asyncio.create_task(smart_reminders())
-    threading.Thread(target=start_http_server, daemon=True).start()
+    asyncio.create_task(reminders())
+    asyncio.create_task(care())
+    threading.Thread(target=start_http, daemon=True).start()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
