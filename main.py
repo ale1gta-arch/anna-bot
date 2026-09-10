@@ -1,3 +1,5 @@
+print("=== ANNA VERSION 2.0 — PANIC PROTOCOL ===", flush=True)
+
 import asyncio, random, json, os, re, threading, time
 from datetime import datetime, timedelta, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -29,9 +31,11 @@ emotion_step = {}
 diary_step = {}
 daily_reminders = {}
 crisis_step = {}
+panic_step = {}
 
 CRISIS_WORDS = ["не хочу жить", "не хочу больше жить", "хочу умереть", "хочу покончить", "покончить с собой", "суицид", "самоубийств", "убить себя", "нет смысла жить", "всё закончилось", "не могу больше жить", "устал жить", "лучше бы меня не было", "хочу исчезнуть"]
 DELETE_WORDS = ["удали данные", "удали всё", "сотри всё", "стереть данные", "удали мои данные", "забудь всё", "удали информацию"]
+PANIC_WORDS = ["паника", "паническая атака", "не могу дышать", "не хватает воздуха", "задыхаюсь", "сердце колотится", "сердце выпрыгивает", "трясёт", "трясет", "схожу с ума", "сойти с ума"]
 
 HOTLINES = """📞 Телефоны помощи:
 
@@ -82,7 +86,7 @@ PSYCHOEDUCATION = {
 }
 
 def load_data():
-    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones, patient_memory, interview_step, last_activity, user_consent, emotion_step, diary_step, daily_reminders, crisis_step
+    global dialogue_history, patient_profiles, mood_journal, care_mode, sober_tracker, user_goals, congratulated, relapse_times, user_timezones, patient_memory, interview_step, last_activity, user_consent, emotion_step, diary_step, daily_reminders, crisis_step, panic_step
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -104,11 +108,12 @@ def load_data():
                 diary_step = d.get("diary_step", {})
                 daily_reminders = d.get("daily_reminders", {})
                 crisis_step = d.get("crisis_step", {})
+                panic_step = d.get("panic_step", {})
         except: pass
 
 def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump({"dialogue_history": dialogue_history, "patient_profiles": patient_profiles, "mood_journal": mood_journal, "care_mode": care_mode, "sober_tracker": sober_tracker, "user_goals": user_goals, "congratulated": congratulated, "relapse_times": relapse_times, "user_timezones": user_timezones, "patient_memory": patient_memory, "interview_step": interview_step, "last_activity": last_activity, "user_consent": user_consent, "emotion_step": emotion_step, "diary_step": diary_step, "daily_reminders": daily_reminders, "crisis_step": crisis_step}, f, ensure_ascii=False, indent=2)
+        json.dump({"dialogue_history": dialogue_history, "patient_profiles": patient_profiles, "mood_journal": mood_journal, "care_mode": care_mode, "sober_tracker": sober_tracker, "user_goals": user_goals, "congratulated": congratulated, "relapse_times": relapse_times, "user_timezones": user_timezones, "patient_memory": patient_memory, "interview_step": interview_step, "last_activity": last_activity, "user_consent": user_consent, "emotion_step": emotion_step, "diary_step": diary_step, "daily_reminders": daily_reminders, "crisis_step": crisis_step, "panic_step": panic_step}, f, ensure_ascii=False, indent=2)
 
 def empty_profile(): return {"name": "", "gender": "", "addiction": "", "stage": "", "triggers": "", "goals": "", "last_relapse": "", "notes": ""}
 def empty_memory(): return {"first_contact": datetime.now().strftime("%d.%m.%Y"), "sessions": 0, "progress_notes": []}
@@ -124,6 +129,7 @@ ANNA_PROMPT = """Ты — Анна Соколова, виртуальный пс
 
 ## ПОЛ ПАЦИЕНТА: {gender}
 Если «мужской» — говори «ты мог», «ты справился». Если «женский» — «ты могла», «ты справилась». НИКОГДА не путай. Ты сама — женщина.
+ВАЖНО: Всегда обращайся на «ты», никогда на «вы».
 
 ## СТИЛЬ
 - Эмпатичная, но без имитации биографии.
@@ -131,13 +137,18 @@ ANNA_PROMPT = """Ты — Анна Соколова, виртуальный пс
 - Отражай эмоции: «Я слышу, что ты злишься».
 - 3–10 предложений.
 
+## ПАНИЧЕСКАЯ АТАКА (СТРОГИЙ ПОРЯДОК)
+1. СНАЧАЛА нормализуй: «Это паника. Она не опасна. Пройдёт через 10–20 минут. Ты в безопасности».
+2. Потом ОДНО простое действие: «Почувствуй стопы на полу» или «Назови 5 вещей, которые видишь».
+3. НИКОГДА не спрашивай «что вызвало панику?» в первые 2–3 ответа.
+4. Если говорит «схожу с ума» — прямо ответь: «Нет, ты не сходишь с ума. Это сильные эмоции, они временны».
+5. Если не может дышать по счёту — убери счёт, скажи «просто дыши глубже».
+6. Не давай длинных списков.
+
 ## ПСИХООБРАЗОВАНИЕ
 - Нейробиология: дофамин, толерантность, тяга как волна.
 - КПТ: Ситуация → Мысль → Эмоция → Поведение.
 - ДБТ: 4 модуля навыков.
-
-## ПАНИКА
-Одно короткое действие: «Дыши со мной: вдох 4, задержка 4, выдох 4. Я жду».
 
 ## ОФФТОП
 На анекдоты/игры — мягко возвращай к терапии.
@@ -158,7 +169,7 @@ ANNA_PROMPT = """Ты — Анна Соколова, виртуальный пс
 [CRAVING] — при вопросе о тяге.
 
 ## ЗАПРЕТЫ
-Не осуждай, не давай медсоветов, не ставь диагнозы."""
+Не осуждай, не давай медсоветов, не ставь диагнозы. Не переходи на «вы»."""
 
 def build_prompt(user_id):
     if user_id not in patient_profiles: patient_profiles[user_id] = empty_profile()
@@ -178,10 +189,10 @@ def fix_gender(uid, text):
     if uid not in patient_profiles: return text
     g = patient_profiles[uid].get("gender", "")
     if g == "мужской":
-        for k, v in {"ты могла": "ты мог", "ты справилась": "ты справился", "ты сделала": "ты сделал", "ты сама": "ты сам", "поделилась": "поделился", "обратила": "обратил", "поняла": "понял", "хотела": "хотел", "была": "был"}.items():
+        for k, v in {"ты могла": "ты мог", "ты справилась": "ты справился", "ты сделала": "ты сделал", "ты сама": "ты сам", "поделилась": "поделился", "обратила": "обратил", "поняла": "понял", "хотела": "хотел", "была": "был", "Вы ": "ты ", "вы ": "ты ", "вас ": "тебя ", "вам ": "тебе ", "ваш ": "твой ", "ваши ": "твои "}.items():
             text = text.replace(k, v)
     elif g == "женский":
-        for k, v in {"ты мог": "ты могла", "ты справился": "ты справилась", "ты сделал": "ты сделала", "ты сам": "ты сама", "поделился": "поделилась", "обратил": "обратила", "понял": "поняла", "хотел": "хотела", "был": "была"}.items():
+        for k, v in {"ты мог": "ты могла", "ты справился": "ты справилась", "ты сделал": "ты сделала", "ты сам": "ты сама", "поделился": "поделилась", "обратил": "обратила", "понял": "поняла", "хотел": "хотела", "был": "была", "Вы ": "ты ", "вы ": "ты ", "вас ": "тебя ", "вам ": "тебе ", "ваш ": "твой ", "ваши ": "твои "}.items():
             text = text.replace(k, v)
     return text
 
@@ -250,6 +261,10 @@ def is_delete(text):
     t = text.lower()
     return any(w in t for w in DELETE_WORDS)
 
+def is_panic(text):
+    t = text.lower()
+    return any(w in t for w in PANIC_WORDS)
+
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
@@ -259,7 +274,8 @@ async def start_cmd(m: types.Message):
     dialogue_history[uid] = []
     if uid not in patient_memory: patient_memory[uid] = empty_memory()
     if uid not in patient_profiles: patient_profiles[uid] = empty_profile()
-    crisis_step.pop(uid, None)
+    crisis_step.pop(uid, None); panic_step.pop(uid, None)
+    interview_step.pop(uid, None); emotion_step.pop(uid, None); diary_step.pop(uid, None)
     save_data()
     await m.answer("Я — виртуальный помощник Анна, а не врач. Не ставлю диагнозы, не назначаю лечение.\n\nДанные конфиденциальны. Для удаления: /reset.\n\nНажмите «Согласен(а)».", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Согласен(а)", callback_data="consent_yes")], [InlineKeyboardButton(text="Не согласен(а)", callback_data="consent_no")]]))
 
@@ -267,7 +283,9 @@ async def start_cmd(m: types.Message):
 async def consent_cb(c: types.CallbackQuery):
     uid = str(c.from_user.id)
     if c.data == "consent_yes":
-        user_consent[uid] = True; save_data()
+        user_consent[uid] = True
+        crisis_step.pop(uid, None); panic_step.pop(uid, None)
+        save_data()
         interview_step[uid] = "name"
         await c.message.answer("Спасибо! Как тебя зовут?")
         await c.answer()
@@ -279,11 +297,15 @@ async def consent_cb(c: types.CallbackQuery):
 
 @dp.message(Command("menu"))
 async def menu_cmd(m: types.Message):
-    crisis_step.pop(str(m.from_user.id), None); save_data()
+    uid = str(m.from_user.id)
+    crisis_step.pop(uid, None); panic_step.pop(uid, None); save_data()
     await m.answer("Меню:", reply_markup=main_menu_kb())
 
 @dp.message(Command("crisis"))
-async def crisis_cmd(m: types.Message): await m.answer("Кризисное меню:", reply_markup=crisis_kb())
+async def crisis_cmd(m: types.Message):
+    uid = str(m.from_user.id)
+    crisis_step.pop(uid, None); panic_step.pop(uid, None); save_data()
+    await m.answer("Кризисное меню:", reply_markup=crisis_kb())
 
 @dp.message(Command("mood"))
 async def mood_cmd(m: types.Message): await m.answer("Оцени состояние:", reply_markup=mood_kb())
@@ -294,7 +316,7 @@ async def help_cmd(m: types.Message): await m.answer("ℹ️ Контакты:\n
 @dp.message(Command("reset"))
 async def reset_cmd(m: types.Message):
     uid = str(m.from_user.id)
-    crisis_step.pop(uid, None); save_data()
+    crisis_step.pop(uid, None); panic_step.pop(uid, None); save_data()
     await m.answer("Удалить все данные? Напишите «Да, удалить» или «Удалить».")
     interview_step[uid] = "confirm_reset"
 
@@ -309,7 +331,16 @@ async def handle(m: types.Message):
     uid = str(m.from_user.id)
     text = m.text
 
-    # Команды всегда работают, даже в кризисе
+    if crisis_step.get(uid):
+        last = last_activity.get(uid, "")
+        if last:
+            try:
+                last_dt = datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+                if (datetime.now() - last_dt).total_seconds() > 7200:
+                    crisis_step.pop(uid, None); save_data()
+            except: pass
+    last_activity[uid] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     if text == "/start": await start_cmd(m); return
     if text == "/menu": await menu_cmd(m); return
     if text == "/crisis": await crisis_cmd(m); return
@@ -318,10 +349,10 @@ async def handle(m: types.Message):
     if text == "/reset": await reset_cmd(m); return
     if text == "/education": await edu_cmd(m); return
 
-    # Согласие
     if uid not in user_consent or not user_consent[uid]:
         if text == "Согласен(а)":
-            user_consent[uid] = True; save_data()
+            user_consent[uid] = True
+            crisis_step.pop(uid, None); panic_step.pop(uid, None); save_data()
             interview_step[uid] = "name"
             await m.answer("Спасибо! Как тебя зовут?"); return
         elif text == "Не согласен(а)":
@@ -329,7 +360,6 @@ async def handle(m: types.Message):
         else:
             await m.answer("Дай согласие или /start."); return
 
-    # КРИЗИС: срабатывает только на новые кризисные сообщения, если не в high
     if is_crisis(text) and crisis_step.get(uid) != "high":
         crisis_step[uid] = "asked_plan"; save_data()
         await m.answer("Алексей, я слышу тебя. Это очень серьёзно.\n\nОтветь честно:\n1. Есть ли конкретный план?\n2. Есть ли доступ к средствам?\n\nОт этого зависит моя помощь.")
@@ -338,29 +368,52 @@ async def handle(m: types.Message):
     if crisis_step.get(uid) == "asked_plan":
         t = text.lower()
         if any(w in t for w in ["да", "есть", "yes", "знаю", "планирую"]):
-            crisis_step[uid] = "high"
-            save_data()
+            crisis_step[uid] = "high"; save_data()
             await m.answer("Это критично. Я не могу продолжать терапию, пока ты в опасности.\n\n🚨 Позвони прямо сейчас:\n📞 112\n📞 8-800-2000-122\n\nПопроси близкого быть рядом. Сделай это сейчас.")
         else:
-            crisis_step[uid] = "low"
-            save_data()
+            crisis_step[uid] = "low"; save_data()
             await m.answer("Спасибо за честность. Позвони на бесплатную линию: 8-800-2000-122 (круглосуточно).\n\nРасскажи, что привело к таким мыслям?")
         return
 
-    # HIGH: разрешаем выход по кнопкам, ключевым словам и другим темам
     if crisis_step.get(uid) == "high":
         t = text.lower()
         exit_keywords = ["паника", "паническая", "тяга", "сорвался", "срыв", "тревога", "грустно", "дневник", "состояние", "назад", "меню", "цели", "знания", "дыхание", "помощь", "настройки", "оценить"]
         exit_buttons = ["📊 Состояние", "📝 Дневник", "🧠 Что я чувствую?", "😰 Паника", "🔥 У меня тяга", "💔 Я сорвался", "🎯 Цели", "📚 Знания", "🧘 Дыхание", "ℹ️ Помощь", "⚙️ Настройки", "⬅️ Назад в меню", "🚨 Мне плохо", "🆘 Я на грани"]
         if any(w in t for w in exit_keywords) or text in exit_buttons:
-            crisis_step.pop(uid, None)
-            save_data()
-            # продолжаем обработку ниже (не возвращаемся)
+            crisis_step.pop(uid, None); save_data()
         else:
             await m.answer("Алексей, я всё ещё здесь. Позвони 112 или 8-800-2000-122 прямо сейчас. Это минута, но она может спасти жизнь.\n\nЯ не могу продолжать, пока ты в опасности. Позвони.")
             return
 
-    # УДАЛЕНИЕ ДАННЫХ
+    if is_panic(text) and panic_step.get(uid) is None and not is_crisis(text):
+        panic_step[uid] = {"turns": 0}
+        save_data()
+        await m.answer("Алексей, это паника. Она не опасна. Пройдёт через 10–20 минут. Ты в безопасности прямо сейчас.\n\nДавай сделаем одно простое: почувствуй стопы на полу. Обе ноги. Просто заметь это. Я жду.")
+        return
+
+    if panic_step.get(uid):
+        ps = panic_step[uid]
+        ps["turns"] = ps.get("turns", 0) + 1
+        panic_step[uid] = ps
+        save_data()
+        t_low = text.lower()
+        if "не могу дышать по" in t_low or "не могу по счету" in t_low or "не понимаю" in t_low:
+            await m.answer("Хорошо, не считай. Просто дыши глубже, как получается. Я рядом. Опиши, где в теле ты чувствуешь напряжение?")
+            return
+        if "схожу с ума" in t_low or "сойти с ума" in t_low:
+            await m.answer("Нет, ты не сходишь с ума. Это сильные эмоции, они временны. Ты в безопасности. Просто дыши и чувствуй стопы на полу. Я здесь.")
+            return
+        try:
+            r = ask_anna(uid, text)
+            clean = r.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
+            await m.answer(clean)
+        except Exception as e:
+            print(f"Err: {e}")
+            await m.answer("Ошибка. Попробуй ещё раз.")
+        if ps["turns"] >= 8:
+            panic_step.pop(uid, None); save_data()
+        return
+
     if is_delete(text):
         await m.answer("Алексей, я уважаю твоё право. Введи /reset — после подтверждения всё будет стёрто (история, анкета, дневник).")
         return
@@ -372,13 +425,13 @@ async def handle(m: types.Message):
             patient_profiles.pop(uid, None); patient_memory.pop(uid, None); sober_tracker.pop(uid, None)
             user_goals.pop(uid, None); user_timezones.pop(uid, None); interview_step.pop(uid, None)
             user_consent.pop(uid, None); emotion_step.pop(uid, None); diary_step.pop(uid, None)
-            crisis_step.pop(uid, None); daily_reminders.pop(uid, None); save_data()
+            crisis_step.pop(uid, None); panic_step.pop(uid, None); daily_reminders.pop(uid, None); last_activity.pop(uid, None)
+            save_data()
             await m.answer("Все данные удалены. /start для начала."); return
         else:
             interview_step.pop(uid, None)
             await m.answer("Сброс отменён."); return
 
-    # ИНТЕРВЬЮ
     step = interview_step.get(uid)
     if step == "name":
         patient_profiles[uid]["name"] = text.strip(); save_data()
@@ -405,15 +458,14 @@ async def handle(m: types.Message):
             await m.answer("Формат ЧЧ:ММ, например 14:30")
         return
 
-    # НАЗАД
     if text in ["⬅️ Назад", "⬅️ Назад в меню", "⬅️ Назад в главное меню"]:
         interview_step.pop(uid, None); emotion_step.pop(uid, None); diary_step.pop(uid, None)
         await m.answer("Меню:", reply_markup=main_menu_kb()); return
 
-    # МЕНЮ
     if text == "🚨 Мне плохо": await m.answer("Что происходит?", reply_markup=crisis_kb()); return
     if text == "🆘 Я на грани":
-        await m.answer("Продержимся вместе:\n1. Умойся ледяной водой.\n2. Дыши 4-4-4-4.\n3. Позвони близкому.\n\nТяга — волна, нарастает и спадает.", reply_markup=craving_kb()); return
+        panic_step[uid] = {"turns": 0}; save_data()
+        await m.answer("Алексей, это паника. Она не опасна. Пройдёт через 10–20 минут. Ты в безопасности.\n\nДавай начнём с простого: почувствуй стопы на полу. Я жду.", reply_markup=craving_kb()); return
     if text == "📊 Состояние":
         d = 0
         if uid in sober_tracker: d = (datetime.now() - datetime.strptime(sober_tracker[uid], "%Y-%m-%d")).days
@@ -438,7 +490,8 @@ async def handle(m: types.Message):
     if text == "⚙️ Настройки": await m.answer("Настройки:", reply_markup=settings_kb()); return
     if text == "🔥 У меня тяга": await m.answer("Оцени силу тяги:", reply_markup=craving_kb()); return
     if text == "😰 Паника":
-        await m.answer("Это паника. Пройдёт за 10–20 минут. Ты в безопасности.\n\nДыши со мной: вдох 4, задержка 4, выдох 4. Повтори 3 раза. Я жду.", reply_markup=crisis_kb()); return
+        panic_step[uid] = {"turns": 0}; save_data()
+        await m.answer("Алексей, это паника. Она не опасна. Пройдёт через 10–20 минут. Ты в безопасности.\n\nДавай сделаем одно: назови 5 вещей, которые видишь. Я жду.", reply_markup=crisis_kb()); return
     if text == "😢 Очень грустно":
         crisis_step[uid] = "asked_plan"; save_data()
         await m.answer("Мне жаль. Есть ли мысли навредить себе? (да/нет)"); return
@@ -452,7 +505,6 @@ async def handle(m: types.Message):
     if text == "🔕 Стоп поддержку": care_mode[uid] = False; save_data(); await m.answer("Поддержка остановлена.", reply_markup=main_menu_kb()); return
     if text == "🗑 Удалить данные": await m.answer("Удалить всё? Напиши «Да, удалить»."); interview_step[uid] = "confirm_reset"; return
 
-    # ЭМОЦИИ
     if emotion_step.get(uid) == "choose":
         if text in ["Грусть", "Тревога", "Злость", "Одиночество", "Стыд", "Страх", "Радость", "Усталость"]:
             emotion_step[uid] = "intensity"
@@ -463,7 +515,6 @@ async def handle(m: types.Message):
             await m.answer("Выбери из кнопок.", reply_markup=emotion_kb())
         return
 
-    # ДНЕВНИК
     if diary_step.get(uid):
         s = diary_step[uid]
         if uid not in patient_memory: patient_memory[uid] = empty_memory()
@@ -478,7 +529,6 @@ async def handle(m: types.Message):
             for k in ["d_s", "d_t", "d_e"]: patient_memory[uid].pop(k, None)
             save_data(); await m.answer("Запись сохранена. 💚", reply_markup=main_menu_kb()); return
 
-    # Обычный диалог
     try:
         r = ask_anna(uid, text)
         clean = r.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
