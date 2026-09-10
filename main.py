@@ -231,12 +231,12 @@ def get_behavior_summary(user_id):
     return "\n".join(summary)
 
 ANNA_PROMPT_TEMPLATE = """
-Ты — Анна Соколова, виртуальный психотерапевт, специализирующийся на помощи при зависимостях. Ты не человек, а программа, действующая на основе клинических протоколов. Твоя цель — поддержать пациента, помочь ему измениться, оставаясь прозрачным инструментом.
+Ты — Анна Соколова, виртуальный психотерапевт, специализирующийся на помощи при зависимостях. Ты не человек, а программа, действующая на основе клинических протоколов.
 
 ## ГЛАВНОЕ ПРАВИЛО ПОЛА (КРИТИЧЕСКИ ВАЖНО)
 Пол пациента: {gender}
-Если пол пациента «мужской» — ВСЕГДА обращайся к нему в мужском роде: «ты мог», «ты справился».
-Если пол пациента «женский» — ВСЕГДА в женском роде: «ты могла», «ты справилась».
+Если пол пациента «мужской» — ВСЕГДА обращайся в мужском роде: «ты мог», «ты справился», «ты сделал», «ты сам», «ты поделился».
+Если пол пациента «женский» — ВСЕГДА в женском роде: «ты могла», «ты справилась», «ты сделала», «ты сама», «ты поделилась».
 НИКОГДА не путай род. Ты сама — женщина, о себе говори в женском роде.
 
 ## ПРОФЕССИОНАЛЬНЫЙ ТОН
@@ -367,7 +367,8 @@ def fix_gender_in_reply(user_id, text):
             "обратила": "обратил", "поняла": "понял",
             "сказала": "сказал", "пришла": "пришёл",
             "хотела": "хотел", "была": "был", "стала": "стал",
-            "могла бы": "мог бы", "смотрела": "смотрел"
+            "могла бы": "мог бы", "смотрела": "смотрел",
+            "поделилась": "поделился", "ответила": "ответил"
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
@@ -378,7 +379,8 @@ def fix_gender_in_reply(user_id, text):
             "обратил": "обратила", "понял": "поняла",
             "сказал": "сказала", "пришёл": "пришла",
             "хотел": "хотела", "был": "была", "стал": "стала",
-            "мог бы": "могла бы", "смотрел": "смотрела"
+            "мог бы": "могла бы", "смотрел": "смотрела",
+            "поделился": "поделилась", "ответил": "ответила"
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
@@ -553,7 +555,7 @@ async def menu_command(message: types.Message):
 
 @dp.message(Command("crisis"))
 async def crisis_command(message: types.Message):
-    await message.answer("Кризисное меню. Выбери, что тебе нужно:", reply_markup=crisis_menu_keyboard())
+    await message.answer("Кризисное меню:", reply_markup=crisis_menu_keyboard())
 
 @dp.message(Command("mood"))
 async def mood_command(message: types.Message):
@@ -673,6 +675,7 @@ async def handle_message(message: types.Message):
     user_id = str(message.from_user.id)
     text = message.text
 
+    # Проверка согласия
     if user_id not in user_consent or not user_consent[user_id]:
         if text == "Согласен(а)":
             user_consent[user_id] = True
@@ -687,6 +690,7 @@ async def handle_message(message: types.Message):
             await message.answer("Пожалуйста, дай согласие или напиши /start.")
             return
 
+    # Подтверждение сброса
     if interview_step.get(user_id) == "confirm_reset":
         text_lower = text.lower().strip()
         if text_lower in ["да, удалить", "да удалить", "удалить", "да", "подтверждаю", "yes", "delete"]:
@@ -717,7 +721,21 @@ async def handle_message(message: types.Message):
             await message.answer("Сброс отменён.")
             return
 
-    if interview_step.get(user_id) == "gender":
+    # ============ ИНТЕРВЬЮ ============
+    step = interview_step.get(user_id)
+
+    if step == "name":
+        patient_profiles[user_id]["name"] = text.strip()
+        save_data()
+        interview_step[user_id] = "gender"
+        await message.answer(
+            f"Приятно познакомиться, {text.strip()}! 🌱\n\n"
+            "Как к тебе обращаться?",
+            reply_markup=gender_keyboard()
+        )
+        return
+
+    if step == "gender":
         if text in ["Мужской", "Женский", "Не важно"]:
             if text == "Мужской":
                 patient_profiles[user_id]["gender"] = "мужской"
@@ -732,9 +750,29 @@ async def handle_message(message: types.Message):
             await message.answer("Пожалуйста, выбери один из вариантов на кнопках.", reply_markup=gender_keyboard())
         return
 
-    # ===== ОБРАБОТКА КНОПКИ «⬅️ Назад» (ИСПРАВЛЕНИЕ) =====
-    if text == "⬅️ Назад":
-        # Возврат в главное меню из любого вложенного
+    if step == "problem":
+        patient_profiles[user_id]["addiction"] = text.strip()
+        save_data()
+        interview_step[user_id] = "level"
+        await message.answer("Поняла. Оцени, насколько это тебя беспокоит, от 1 до 10:", reply_markup=mood_keyboard())
+        return
+
+    if step == "time":
+        offset = parse_patient_time(text)
+        if offset is not None:
+            user_timezones[user_id] = offset
+            save_data()
+            interview_step[user_id] = "done"
+            await message.answer(
+                "✅ Время сохранено. Теперь мы можем начать. Расскажи, что тебя сейчас беспокоит больше всего?",
+                reply_markup=main_menu_keyboard()
+            )
+        else:
+            await message.answer("Напиши время в формате ЧЧ:ММ, например 14:30")
+        return
+
+    # ============ КНОПКА НАЗАД ============
+    if text == "⬅️ Назад" or text == "⬅️ Назад в главное меню":
         interview_step.pop(user_id, None)
         emotion_step.pop(user_id, None)
         diary_step.pop(user_id, None)
@@ -742,6 +780,7 @@ async def handle_message(message: types.Message):
         await message.answer("Главное меню:", reply_markup=main_menu_keyboard())
         return
 
+    # ============ ГЛАВНОЕ МЕНЮ ============
     if text == "🚨 Мне плохо сейчас":
         await message.answer("Выбери, что происходит:", reply_markup=crisis_menu_keyboard())
         return
@@ -751,7 +790,7 @@ async def handle_message(message: types.Message):
             "1. Умойся ледяной водой.\n"
             "2. Дыши 4-4-4-4.\n"
             "3. Позвони близкому или напиши мне.\n\n"
-            "Если тяга выше 7/10 — «Сёрфинг по тяге»: тяга нарастает и спадает. Наблюдай за ней.",
+            "Если тяга выше 7/10 — «Сёрфинг по тяге»: тяга нарастает и спадает.",
             reply_markup=craving_keyboard()
         )
         return
@@ -844,9 +883,6 @@ async def handle_message(message: types.Message):
     elif text == "📞 Позвонить в службу поддержки":
         await message.answer(HOTLINES, reply_markup=crisis_menu_keyboard())
         return
-    elif text == "⬅️ Назад в главное меню":
-        await message.answer("Главное меню:", reply_markup=main_menu_keyboard())
-        return
     elif text == "⏰ Указать время":
         await message.answer("Напиши текущее время в формате ЧЧ:ММ, например 14:30")
         interview_step[user_id] = "time"
@@ -875,10 +911,13 @@ async def handle_message(message: types.Message):
         )
         return
 
+    # ============ ЭМОЦИИ ============
     if emotion_step.get(user_id) == "choose":
         valid_emotions = ["Грусть", "Тревога", "Злость", "Одиночество", "Стыд", "Страх", "Радость", "Усталость"]
         if text in valid_emotions:
             emotion_step[user_id] = "intensity"
+            if user_id not in patient_memory:
+                patient_memory[user_id] = empty_memory()
             patient_memory[user_id]["last_emotion"] = text
             save_data()
             await message.answer(f"Ты выбрал(а) {text}. Оцени интенсивность от 1 до 10:", reply_markup=mood_keyboard())
@@ -886,8 +925,11 @@ async def handle_message(message: types.Message):
             await message.answer("Пожалуйста, выбери эмоцию из кнопок.", reply_markup=emotion_keyboard())
         return
 
+    # ============ ДНЕВНИК ============
     if diary_step.get(user_id):
         step = diary_step[user_id]
+        if user_id not in patient_memory:
+            patient_memory[user_id] = empty_memory()
         if step == "situation":
             patient_memory[user_id]["diary_situation"] = text
             diary_step[user_id] = "thought"
@@ -920,6 +962,7 @@ async def handle_message(message: types.Message):
             await message.answer("Запись сохранена. 💚", reply_markup=main_menu_keyboard())
             return
 
+    # ============ ОЦЕНКА СУИЦИДАЛЬНОГО РИСКА ============
     if emotion_step.get(user_id) == "suicide_risk_1":
         if text.lower() in ["да", "yes", "есть"]:
             await message.answer("Есть ли у тебя конкретный план?")
@@ -948,17 +991,7 @@ async def handle_message(message: types.Message):
         emotion_step.pop(user_id, None)
         return
 
-    offset = parse_patient_time(text)
-    if offset is not None:
-        user_timezones[user_id] = offset
-        save_data()
-        if interview_step.get(user_id) == "time":
-            interview_step[user_id] = "done"
-            await message.answer("✅ Время сохранено.", reply_markup=main_menu_keyboard())
-        else:
-            await message.answer("✅ Время сохранено.", reply_markup=main_menu_keyboard())
-        return
-
+    # ============ ОБЫЧНЫЙ ДИАЛОГ ============
     try:
         anna_reply = ask_anna(user_id, text)
         clean = anna_reply.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
@@ -985,7 +1018,22 @@ async def handle_callback(callback: types.CallbackQuery):
         update_memory(user_id, "progress_notes", f"Оценка {v}/10")
         record_behavior(user_id, f"[Оценка: {v}/10]", mood_score=v)
 
-        if emotion_step.get(user_id) == "intensity":
+        # Если это шаг интервью «level»
+        if interview_step.get(user_id) == "level":
+            if user_id not in patient_profiles:
+                patient_profiles[user_id] = empty_profile()
+            patient_profiles[user_id]["stage"] = f"Уровень: {v}/10"
+            save_data()
+            interview_step[user_id] = "time"
+            await callback.message.answer(
+                f"Спасибо. Теперь я понимаю твою ситуацию лучше. 💚\n\n"
+                "И последнее: сколько у тебя сейчас времени?\n"
+                "Напиши в формате ЧЧ:ММ, например: 14:30"
+            )
+        # Если это опрос эмоций
+        elif emotion_step.get(user_id) == "intensity":
+            if user_id not in patient_memory:
+                patient_memory[user_id] = empty_memory()
             emotion = patient_memory[user_id].get("last_emotion", "")
             if emotion:
                 mood_journal[user_id].append(f"[Эмоция] {emotion}: {v}/10")
@@ -994,6 +1042,7 @@ async def handle_callback(callback: types.CallbackQuery):
                 emotion_step.pop(user_id, None)
             else:
                 await callback.message.answer("Ошибка, попробуй ещё раз.", reply_markup=emotion_keyboard())
+        # Обычная оценка
         else:
             if v <= 5:
                 care_mode[user_id] = True
