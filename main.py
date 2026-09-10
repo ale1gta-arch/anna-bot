@@ -185,7 +185,7 @@ ANNA_PROMPT_TEMPLATE = """
 Пол пациента: {gender}
 Если пол пациента «мужской» — ВСЕГДА обращайся к нему в мужском роде: «ты мог», «ты справился», «ты сделал», «ты сам».
 Если пол пациента «женский» — ВСЕГДА обращайся к нему в женском роде: «ты могла», «ты справилась», «ты сделала», «ты сама».
-НИКОГДА не путай род пациента. Проверяй каждое обращение к нему. Если сомневаешься — используй нейтральные формулировки без рода.
+НИКОГДА не путай род пациента. Проверяй каждое обращение. Если сомневаешься — используй нейтральные формулировки без рода.
 Ты сама (Анна) — женщина, говори о себе в женском роде всегда.
 
 ## ПРОФЕССИОНАЛЬНЫЙ ТОН
@@ -609,4 +609,490 @@ async def export_command(message: types.Message):
     else:
         report += "Нет записей\n"
     report += "\nДневник:\n"
-    diary_entries = [e for e in mood_journal.get(user_id, [])
+    diary_entries = [e for e in mood_journal.get(user_id, []) if "[Дневник]" in e]
+    if diary_entries:
+        for entry in diary_entries[-5:]:
+            report += f"• {entry.replace('[Дневник] ', '')}\n"
+    else:
+        report += "Нет записей\n"
+    await message.answer(report)
+
+@dp.message(Command("feedback"))
+async def feedback_command(message: types.Message):
+    user_id = str(message.from_user.id)
+    await message.answer(
+        "Насколько полезной была наша последняя техника или разговор?\n"
+        "Оцени от 1 до 5:",
+        reply_markup=feedback_keyboard()
+    )
+
+@dp.message(Command("reset"))
+async def reset_command(message: types.Message):
+    user_id = str(message.from_user.id)
+    await message.answer(
+        "Вы уверены, что хотите удалить все данные? Это действие необратимо.\n"
+        "Напишите «Да, удалить» (или просто «Удалить») для подтверждения."
+    )
+    interview_step[user_id] = "confirm_reset"
+
+@dp.message(Command("stop_care"))
+async def stop_care_command(message: types.Message):
+    care_mode[str(message.from_user.id)] = False
+    save_data()
+    await message.answer("Поддержка приостановлена. Ты можешь включить её снова в настройках.")
+
+@dp.message(lambda message: message.voice is not None)
+async def handle_voice(message: types.Message):
+    await message.answer("Я слышу тебя. Опиши текстом. 💚")
+
+@dp.message()
+async def handle_message(message: types.Message):
+    user_id = str(message.from_user.id)
+    text = message.text
+
+    if user_id not in user_consent or not user_consent[user_id]:
+        if text == "Согласен(а)":
+            user_consent[user_id] = True
+            save_data()
+            interview_step[user_id] = "name"
+            await message.answer("Спасибо! Как тебя зовут?")
+            return
+        elif text == "Не согласен(а)":
+            await message.answer("Хорошо. Если передумаешь, напиши /start.")
+            return
+        else:
+            await message.answer("Пожалуйста, дай согласие или напиши /start.")
+            return
+
+    if interview_step.get(user_id) == "confirm_reset":
+        text_lower = text.lower().strip()
+        confirm_variants = ["да, удалить", "да удалить", "удалить", "да", "подтверждаю", "yes", "delete"]
+        if text_lower in confirm_variants:
+            dialogue_history.pop(user_id, None)
+            mood_journal.pop(user_id, None)
+            care_mode.pop(user_id, None)
+            patient_profiles.pop(user_id, None)
+            patient_memory.pop(user_id, None)
+            behavior_journal.pop(user_id, None)
+            sober_tracker.pop(user_id, None)
+            user_goals.pop(user_id, None)
+            congratulated.pop(user_id, None)
+            user_timezones.pop(user_id, None)
+            interview_step.pop(user_id, None)
+            last_activity.pop(user_id, None)
+            user_consent.pop(user_id, None)
+            stage_of_change.pop(user_id, None)
+            emotion_step.pop(user_id, None)
+            diary_step.pop(user_id, None)
+            feedback_data.pop(user_id, None)
+            daily_reminders.pop(user_id, None)
+            save_data()
+            await message.answer("Все данные удалены. Чтобы начать заново, напиши /start.")
+            return
+        else:
+            interview_step.pop(user_id, None)
+            await message.answer("Сброс отменён.")
+            return
+
+    if interview_step.get(user_id) == "gender":
+        if text in ["Мужской", "Женский", "Не важно"]:
+            if text == "Мужской":
+                patient_profiles[user_id]["gender"] = "мужской"
+            elif text == "Женский":
+                patient_profiles[user_id]["gender"] = "женский"
+            else:
+                patient_profiles[user_id]["gender"] = "не указан"
+            save_data()
+            interview_step[user_id] = "problem"
+            await message.answer("Спасибо. С чем ты хочешь работать? Например: зависимость, тревога, депрессия, стресс...")
+        else:
+            await message.answer("Пожалуйста, выбери один из вариантов на кнопках.", reply_markup=gender_keyboard())
+        return
+
+    if text == "🚨 Мне плохо сейчас":
+        await message.answer("Выбери, что происходит:", reply_markup=crisis_menu_keyboard())
+        return
+    elif text == "🆘 Я на грани":
+        await message.answer(
+            "Ты на грани? Давай продержимся вместе прямо сейчас.\n"
+            "Сделай три шага:\n"
+            "1. Умойся ледяной водой.\n"
+            "2. Дыши по квадрату: 4-4-4-4.\n"
+            "3. Позвони близкому или напиши мне.\n\n"
+            "Если тяга выше 7/10, используй «Сёрфинг по тяге»:\n"
+            "Представь, что тяга — волна. Она нарастает, достигает пика и спадает. Наблюдай за ней, не действуя.",
+            reply_markup=craving_keyboard()
+        )
+        return
+    elif text == "📊 Моё состояние":
+        days = 0
+        if user_id in sober_tracker:
+            days = (datetime.now() - datetime.strptime(sober_tracker[user_id], "%Y-%m-%d")).days
+        last_moods = mood_journal.get(user_id, [])[-5:]
+        mood_str = "\n".join(last_moods) if last_moods else "нет записей"
+        await message.answer(f"📊 Твоё состояние:\n\nДней чистоты: {days}\n\nПоследние оценки:\n{mood_str}", reply_markup=main_menu_keyboard())
+        return
+    elif text == "🧠 Что я чувствую?":
+        emotion_step[user_id] = "choose"
+        await message.answer("Какое чувство ты испытываешь прямо сейчас?", reply_markup=emotion_keyboard())
+        return
+    elif text == "📝 Дневник":
+        diary_step[user_id] = "situation"
+        await message.answer("Давай сделаем запись.\n\nШаг 1/4: Опиши ситуацию.")
+        return
+    elif text == "🎯 Мои цели":
+        goals = user_goals.get(user_id, "")
+        if goals:
+            await message.answer(f"Твои цели:\n{goals}\n\nЧтобы добавить новую, напиши: /goals <цель>", reply_markup=main_menu_keyboard())
+        else:
+            await message.answer("Цели пока не заданы. Напиши: /goals <цель>", reply_markup=main_menu_keyboard())
+        return
+    elif text == "ℹ️ Помощь и контакты":
+        await message.answer(
+            "ℹ️ Контакты:\n\n"
+            "• 112 — экстренная помощь\n"
+            "• 8-800-2000-122 — телефон доверия\n\n"
+            "Я — виртуальный помощник, а не врач. При необходимости обратись к очному специалисту.",
+            reply_markup=main_menu_keyboard()
+        )
+        return
+    elif text == "⚙️ Настройки":
+        await message.answer("Настройки:", reply_markup=settings_menu_keyboard())
+        return
+    elif text == "🔥 У меня тяга":
+        await message.answer("Оцени силу тяги от 1 до 10:", reply_markup=craving_keyboard())
+        return
+    elif text == "😰 Паника/тревога":
+        await message.answer(
+            "Сделай следующее:\n"
+            "1. Назови 5 вещей, которые видишь.\n"
+            "2. Назови 4 вещи, которые слышишь.\n"
+            "3. Назови 3 вещи, которые чувствуешь.\n"
+            "4. Медленно вдохни и выдохни 5 раз.\n\n"
+            "Если паника не проходит, позвони доверенному лицу или 112.",
+            reply_markup=crisis_menu_keyboard()
+        )
+        return
+    elif text == "😢 Очень грустно, нет сил":
+        await message.answer(
+            "Мне жаль, что тебе так тяжело. Я хочу помочь.\n\n"
+            "Есть ли у тебя мысли о том, чтобы навредить себе? (да/нет)"
+        )
+        emotion_step[user_id] = "suicide_risk_1"
+        return
+    elif text == "💔 Я сорвался":
+        sober_tracker[user_id] = datetime.now().strftime("%Y-%m-%d")
+        relapse_times.append(datetime.now().strftime("%H:%M"))
+        congratulated[user_id] = []
+        update_memory(user_id, "important_events", "Срыв")
+        save_data()
+        stage_of_change[user_id] = "рецидив"
+        save_data()
+        await message.answer(
+            "Спасибо за честность. Срыв — это не поражение, а информация.\n"
+            "Что произошло перед срывом? Опиши ситуацию.",
+            reply_markup=crisis_menu_keyboard()
+        )
+        return
+    elif text == "📞 Позвонить в службу поддержки":
+        await message.answer(
+            "📞 Номера:\n\n"
+            "• 112 — экстренная помощь\n"
+            "• 8-800-2000-122 — телефон доверия (бесплатно)\n\n"
+            "Позвони прямо сейчас, если тебе плохо.",
+            reply_markup=crisis_menu_keyboard()
+        )
+        return
+    elif text == "⬅️ Назад в главное меню":
+        await message.answer("Главное меню:", reply_markup=main_menu_keyboard())
+        return
+    elif text == "⏰ Указать время":
+        await message.answer("Напиши текущее время в формате ЧЧ:ММ, например 14:30")
+        interview_step[user_id] = "time"
+        return
+    elif text == "🔕 Приостановить поддержку":
+        care_mode[user_id] = False
+        save_data()
+        await message.answer("Поддержка приостановлена. Ты можешь включить её снова в настройках.", reply_markup=main_menu_keyboard())
+        return
+    elif text == "🗑 Удалить все данные":
+        await message.answer(
+            "Вы уверены? Это действие необратимо.\n"
+            "Напишите «Да, удалить» (или просто «Удалить») для подтверждения."
+        )
+        interview_step[user_id] = "confirm_reset"
+        return
+    elif text.lower() == "как помочь близкому":
+        await message.answer(
+            "Если ты близкий человек зависимого, важно:\n"
+            "1. Заботься о себе — ты не можешь помочь, если выгорел(а).\n"
+            "2. Устанавливай границы: не потакай употреблению, не покрывай.\n"
+            "3. Не вини себя — зависимость это болезнь, а не слабость.\n"
+            "4. Поддерживай, но не контролируй.\n"
+            "5. Обратись за поддержкой к специалистам или в группы для созависимых.\n\n"
+            "Если хочешь обсудить конкретную ситуацию, напиши мне.",
+            reply_markup=main_menu_keyboard()
+        )
+        return
+
+    if emotion_step.get(user_id) == "choose":
+        valid_emotions = ["Грусть", "Тревога", "Злость", "Одиночество", "Стыд", "Страх", "Радость", "Усталость"]
+        if text in valid_emotions:
+            emotion_step[user_id] = "intensity"
+            patient_memory[user_id]["last_emotion"] = text
+            save_data()
+            await message.answer(f"Ты выбрал(а) {text}. Оцени интенсивность от 1 до 10:", reply_markup=mood_keyboard())
+        else:
+            await message.answer("Пожалуйста, выбери эмоцию из кнопок.", reply_markup=emotion_keyboard())
+        return
+
+    if diary_step.get(user_id):
+        step = diary_step[user_id]
+        if step == "situation":
+            patient_memory[user_id]["diary_situation"] = text
+            diary_step[user_id] = "thought"
+            await message.answer("Шаг 2/4: Какая мысль возникла в этой ситуации?")
+            return
+        elif step == "thought":
+            patient_memory[user_id]["diary_thought"] = text
+            diary_step[user_id] = "emotion"
+            await message.answer("Шаг 3/4: Что ты почувствовал(а)? (одно слово)")
+            return
+        elif step == "emotion":
+            patient_memory[user_id]["diary_emotion"] = text
+            diary_step[user_id] = "action"
+            await message.answer("Шаг 4/4: Что ты сделал(а) в этой ситуации?")
+            return
+        elif step == "action":
+            situation = patient_memory[user_id].get("diary_situation", "")
+            thought = patient_memory[user_id].get("diary_thought", "")
+            emotion = patient_memory[user_id].get("diary_emotion", "")
+            action = text
+            entry = f"Ситуация: {situation}\nМысль: {thought}\nЭмоция: {emotion}\nДействие: {action}"
+            if user_id not in mood_journal:
+                mood_journal[user_id] = []
+            mood_journal[user_id].append(f"[Дневник] {entry}")
+            save_data()
+            diary_step.pop(user_id, None)
+            for k in ["diary_situation", "diary_thought", "diary_emotion"]:
+                patient_memory[user_id].pop(k, None)
+            save_data()
+            await message.answer("Запись сохранена. Спасибо, что поделился(ась). 💚", reply_markup=main_menu_keyboard())
+            return
+
+    if emotion_step.get(user_id) == "suicide_risk_1":
+        if text.lower() in ["да", "yes", "есть"]:
+            await message.answer("Есть ли у тебя конкретный план, как это сделать?")
+            emotion_step[user_id] = "suicide_risk_2"
+        else:
+            await message.answer("Хорошо, что ты сказал(а). Ты не один(а). Давай попробуем вместе найти выход.", reply_markup=crisis_menu_keyboard())
+            emotion_step.pop(user_id, None)
+        return
+    elif emotion_step.get(user_id) == "suicide_risk_2":
+        if text.lower() in ["да", "yes", "есть"]:
+            await message.answer("Есть ли у тебя доступ к средствам?")
+            emotion_step[user_id] = "suicide_risk_3"
+        else:
+            await message.answer("Пожалуйста, позвони 8-800-2000-122 или 112, чтобы получить помощь. Я не могу заменить специалиста.", reply_markup=crisis_menu_keyboard())
+            emotion_step.pop(user_id, None)
+        return
+    elif emotion_step.get(user_id) == "suicide_risk_3":
+        if text.lower() in ["да", "yes", "есть"]:
+            await message.answer(
+                "Сейчас очень важно, чтобы ты позвонил(а) 112 или попросил(а) кого-то быть рядом.\n"
+                "Я не могу продолжать терапию в таком состоянии.\n"
+                "Пожалуйста, набери номер экстренной службы.",
+                reply_markup=crisis_menu_keyboard()
+            )
+        else:
+            await message.answer("Пожалуйста, обратись к близким или позвони на горячую линию 8-800-2000-122.", reply_markup=crisis_menu_keyboard())
+        emotion_step.pop(user_id, None)
+        return
+
+    offset = parse_patient_time(text)
+    if offset is not None:
+        user_timezones[user_id] = offset
+        save_data()
+        if interview_step.get(user_id) == "time":
+            interview_step[user_id] = "done"
+            await message.answer("✅ Время сохранено. Напоминания будут приходить в твоё время.", reply_markup=main_menu_keyboard())
+        else:
+            await message.answer("✅ Время сохранено.", reply_markup=main_menu_keyboard())
+        return
+
+    try:
+        anna_reply = ask_anna(user_id, text)
+        clean = anna_reply.replace("[MOOD]", "").replace("[CRAVING]", "").strip()
+        if "[CRAVING]" in anna_reply:
+            await message.answer(clean, reply_markup=craving_keyboard())
+        elif "[MOOD]" in anna_reply:
+            await message.answer(clean, reply_markup=mood_keyboard())
+        else:
+            await message.answer(clean)
+    except Exception as e:
+        print(f"Ошибка: {e}")
+        await message.answer("Прости, ошибка. Попробуй ещё раз.")
+
+@dp.callback_query()
+async def handle_callback(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    data = callback.data
+
+    if data.startswith("mood_"):
+        v = int(data.split("_")[1])
+        if user_id not in mood_journal:
+            mood_journal[user_id] = []
+        mood_journal[user_id].append(f"{datetime.now().strftime('%d.%m.%Y %H:%M')} — {v}/10")
+        update_memory(user_id, "progress_notes", f"Оценка {v}/10")
+        record_behavior(user_id, f"[Оценка: {v}/10]", mood_score=v)
+
+        if emotion_step.get(user_id) == "intensity":
+            emotion = patient_memory[user_id].get("last_emotion", "")
+            if emotion:
+                mood_journal[user_id].append(f"[Эмоция] {emotion}: {v}/10")
+                save_data()
+                await callback.message.answer(f"Записал: {emotion} ({v}/10). Спасибо, что поделился(ась).", reply_markup=main_menu_keyboard())
+                emotion_step.pop(user_id, None)
+            else:
+                await callback.message.answer("Произошла ошибка, попробуй ещё раз.", reply_markup=emotion_keyboard())
+        else:
+            if v <= 5:
+                care_mode[user_id] = True
+                await callback.message.answer(f"Спасибо ({v}/10). Я рядом. 💚")
+            else:
+                care_mode[user_id] = False
+                await callback.message.answer(f"Отлично! {v}/10. ☀️")
+        save_data()
+        await callback.answer()
+    elif data.startswith("craving_"):
+        levels = {"low": "Слабая", "medium": "Средняя", "high": "Сильная", "extreme": "Невыносимая"}
+        level = levels.get(data.replace("craving_", ""), "")
+        if user_id in dialogue_history:
+            dialogue_history[user_id].append({"role": "system", "content": f"Тяга оценена: {level}. Тема закрыта."})
+        save_data()
+        await callback.message.answer(f"Тяга: {level}. Опиши, где в теле ты её чувствуешь? 🌊")
+        await callback.answer()
+    elif data.startswith("fb_"):
+        fb_val = int(data.split("_")[1])
+        if user_id not in feedback_data:
+            feedback_data[user_id] = []
+        feedback_data[user_id].append(fb_val)
+        save_data()
+        await callback.message.answer("Спасибо за обратную связь! Это помогает мне стать лучше. 💚")
+        await callback.answer()
+    else:
+        await callback.answer()
+
+async def send_reminders():
+    while True:
+        for uid in list(dialogue_history.keys()):
+            patient_now = get_patient_time(uid)
+            patient_time_str = patient_now.strftime("%H:%M")
+            patient_date_str = patient_now.strftime("%Y-%m-%d")
+
+            if patient_time_str == "09:00":
+                last_date = daily_reminders.get(uid, {}).get("morning")
+                if last_date != patient_date_str:
+                    try:
+                        await bot.send_message(uid, "🌅 Доброе утро! Оцени своё состояние:", reply_markup=mood_keyboard())
+                        daily_reminders.setdefault(uid, {})["morning"] = patient_date_str
+                        save_data()
+                    except:
+                        pass
+
+            if patient_time_str == "21:00":
+                last_date = daily_reminders.get(uid, {}).get("evening")
+                if last_date != patient_date_str:
+                    try:
+                        await bot.send_message(uid, "🌙 Как прошёл день? Оцени своё состояние:\nТакже заметь: были ли мысли об употреблении?", reply_markup=mood_keyboard())
+                        daily_reminders.setdefault(uid, {})["evening"] = patient_date_str
+                        save_data()
+                    except:
+                        pass
+
+        await asyncio.sleep(30)
+
+async def smart_reminders():
+    while True:
+        await asyncio.sleep(1800)
+        if relapse_times:
+            common_time = Counter(relapse_times).most_common(1)[0][0]
+            if datetime.now().strftime("%H:%M") == common_time:
+                for uid in dialogue_history.keys():
+                    try:
+                        await bot.send_message(uid, "⏰ В это время раньше случались срывы. Будь внимателен. 💚")
+                    except:
+                        pass
+
+async def send_hourly_care():
+    messages = ["🌱 Я рядом.", "💭 Что внутри?", "☀️ Держишься!", "🌊 Волна спадает.", "💪 Ты сильнее!", "🧘 4-4-4-4.", "📋 Что сделаешь?", "🌙 Ты не один."]
+    while True:
+        await asyncio.sleep(3600)
+        for uid in list(care_mode.keys()):
+            if care_mode.get(uid, False):
+                try:
+                    await bot.send_message(uid, random.choice(messages))
+                except:
+                    pass
+
+async def send_congratulations():
+    while True:
+        await asyncio.sleep(3600)
+        for uid in list(sober_tracker.keys()):
+            days = (datetime.now() - datetime.strptime(sober_tracker[uid], "%Y-%m-%d")).days
+            for m in [3, 7, 14, 30]:
+                if days == m and m not in congratulated.get(uid, []):
+                    congratulated.setdefault(uid, []).append(m)
+                    save_data()
+                    emoji = {3: "💪", 7: "🥉", 14: "🥈", 30: "🏆"}[m]
+                    try:
+                        await bot.send_message(uid, f"{emoji} {m} дней! Ты невероятен!")
+                    except:
+                        pass
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+    def do_POST(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.end_headers()
+    def log_message(self, format, *args):
+        pass
+
+def start_http_server():
+    try:
+        port = int(os.environ.get("PORT", 10000))
+        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        def self_ping():
+            while True:
+                try:
+                    requests.get(f"http://localhost:{port}/", timeout=5)
+                except:
+                    pass
+                time.sleep(300)
+        threading.Thread(target=self_ping, daemon=True).start()
+        server.serve_forever()
+    except:
+        pass
+
+async def main():
+    load_data()
+    await bot.delete_webhook(drop_pending_updates=True)
+    asyncio.create_task(send_reminders())
+    asyncio.create_task(send_hourly_care())
+    asyncio.create_task(send_congratulations())
+    asyncio.create_task(smart_reminders())
+    threading.Thread(target=start_http_server, daemon=True).start()
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
